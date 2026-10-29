@@ -36,7 +36,8 @@ you take the importer, I keep the filter UI — files don't overlap
 ```bash
 git clone <this repo> && cd agentbus
 ./scripts/install.sh              # 编译到 ~/.local/bin/agentbus + 安装 skill
-./scripts/install.sh --hooks      # 同时把 hooks 合入 claude code / zcode 配置（自动备份）
+./scripts/install.sh --hooks      # 把 hooks 合入 claude code + zcode（自动备份）
+./scripts/install.sh --zcode-hooks  # 只接 zcode（已在 ZCode 桌面版实测）
 ./scripts/install.sh --plugin     # 刷新插件包并打印安装方式（见下）
 ```
 

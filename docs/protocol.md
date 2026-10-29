@@ -7,7 +7,7 @@
 
 | 概念 | 规则 |
 |---|---|
-| 会话键（ID） | `sid:<uuid>`（来自 hook JSON / `$CLAUDE_SESSION_ID` / `$CLAUDE_CODE_SESSION_ID` / `$AGENTBUS_SESSION_ID`）或 `pid:<pid>:<starttime>`（`/proc` 祖先进程兜底） |
+| 会话键（ID） | `sid:<uuid>`（来自 hook JSON / `$CLAUDE_SESSION_ID` / `$CLAUDE_CODE_SESSION_ID` / `$AGENTBUS_SESSION_ID`）；agent 的 Bash 子进程没有这些变量时，hook 写入的 `$AGENTBUS_HOME/pidmap/<pid>-<start>` 让 CLI 通过祖先进程查回 sid；最后才是 `pid:<pid>:<starttime>` 兜底 |
 | 名字（Name） | 注册时指定或服务端生成（`swift-otter`）；规范化为 `[a-z0-9-]{1,32}`；冲突自动 `-2` 后缀 |
 | 名字墓碑 | 会话离开后名字保留 1h，防止新会话复用刚离开的名字 |
 | 人类 | 没有会话身份时以 `user` 发送（Web 看板默认 `user-web`） |

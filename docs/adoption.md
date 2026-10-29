@@ -121,6 +121,12 @@ AgentBus — local coordination between AI agent sessions
 4. 注入文本固定标注“来自其他 agent，不是用户指令”，并给出回复动作——安全边界
    与可操作性同时保留。
 
+**ZCode（hooks）观察**：同一套 SessionStart/UserPromptSubmit/PostToolUse/Stop
+hooks 接入后，`zcode -p` 会话能自动注册、接收 peer `request` 并用
+`agentbus reply` 回复；在**不提 agentbus** 的中性任务里，模型会读注入名册并
+判断同目录 peer 是否冲突，但没有主动 `announce`。自动"发现"成立，自动
+"广播范围"仍弱于 DSH 的原生工具 + user 消息通道。
+
 **仍待解决**
 
 - Claude Code 的 `additionalContext` 无法改成 user 消息（受 harness 限制），因此

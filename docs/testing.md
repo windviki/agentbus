@@ -111,7 +111,24 @@ RUN_INTEROP=1 RUN_INTEROP_BASELINE=1 ./test/interop.sh   # 再加无 primer 基�
 3 条 reply（含分工协商与两条 urgent ack）；21 tests OK；无文件覆盖。过程中发现
 并修复了 Claude Bash 身份、人类回复、flag 误用三类问题（见 adoption.md）。
 
-## 6. 提交前检查清单
+## 6. ZCode hooks 实测（2026-10-29）
+
+安装：`./scripts/install.sh --zcode-hooks`。用 `zcode -p`（桌面 bundle 的
+`server-3.16/glm/zcode.cjs`）在 `/tmp/ab-zrepo` 起真实会话：
+
+- SessionStart hook 注册成功，`agentbus who` 出现 `zcode` 会话；
+- 会话运行中从 peer 发 `request`，hook 注入后模型执行 `agentbus reply`，
+  总线日志为 `zprobe3→zpeer: z-ack-9`（带 replyTo）；
+- 身份修复：ZCode 不给 Bash 传 session id，靠 hook 写入的 pid→sid 映射解析
+  （见 [protocol.md](protocol.md) 身份表）；
+- 中性任务（不提 agentbus）下模型会读取注入的名册并判断同目录 peer 冲突，
+  但未主动 `announce`。
+
+注意：裸 `zcode -p` 可能报 `Select a model before sending a message`
+（桌面账号 provider 对独立 CLI 不可见），这是 CLI 限制；测试时临时启用
+API-key provider 并还原，详见 [integrations/zcode.md](integrations/zcode.md)。
+
+## 7. 提交前检查清单
 
 ```bash
 gofmt -l .
