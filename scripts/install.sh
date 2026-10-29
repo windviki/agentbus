@@ -1,31 +1,36 @@
 #!/usr/bin/env bash
 # agentbus installer: builds the binary, installs the cross-agent skill, and
-# optionally wires hooks (--hooks) or prints plugin-bundle paths (--plugin).
+# optionally wires hooks (all agents or one agent) or prints plugin paths.
 #
 # Usage:
-#   ./scripts/install.sh              # binary + skill
-#   ./scripts/install.sh --hooks      # additionally wire hooks (backs up settings)
-#   ./scripts/install.sh --plugin     # refresh + show the installable plugin bundles
+#   ./scripts/install.sh                 # binary + skill
+#   ./scripts/install.sh --hooks         # wire hooks for claude code + zcode
+#   ./scripts/install.sh --zcode-hooks   # wire hooks for zcode only
+#   ./scripts/install.sh --claude-hooks  # wire hooks for claude code only
+#   ./scripts/install.sh --plugin        # refresh + show installable plugin bundles
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN_DEST="${AGENTBUS_BIN:-$HOME/.local/bin}"
-HOOKS=0
+CLAUDE_HOOKS=0
+ZCODE_HOOKS=0
 PLUGIN=0
 for arg in "$@"; do
   case "$arg" in
-    --hooks)  HOOKS=1 ;;
-    --plugin) PLUGIN=1 ;;
+    --hooks)        CLAUDE_HOOKS=1; ZCODE_HOOKS=1 ;;
+    --claude-hooks) CLAUDE_HOOKS=1 ;;
+    --zcode-hooks)  ZCODE_HOOKS=1 ;;
+    --plugin)       PLUGIN=1 ;;
     -h|--help)
-      sed -n '5,8p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '5,10p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *)
-      echo "unknown option: $arg (expected --hooks or --plugin)" >&2
+      echo "unknown option: $arg (expected --hooks, --claude-hooks, --zcode-hooks or --plugin)" >&2
       exit 2 ;;
   esac
 done
-if [ "$HOOKS" = "1" ] && [ "$PLUGIN" = "1" ]; then
-  echo "--hooks and --plugin wire the same hooks; pick one to avoid double delivery" >&2
+if { [ "$CLAUDE_HOOKS" = "1" ] || [ "$ZCODE_HOOKS" = "1" ]; } && [ "$PLUGIN" = "1" ]; then
+  echo "hooks and --plugin wire the same events; pick one to avoid double delivery" >&2
   exit 2
 fi
 
@@ -46,7 +51,11 @@ install_skill() {
 }
 install_skill "$HOME/.agents/skills/agentbus" always      # shared across agents
 install_skill "$HOME/.claude/skills/agentbus"             # claude code, if present
-install_skill "$HOME/.zcode/skills/agentbus"              # zcode, if present
+# zcode scans the shared ~/.agents/skills directory too; installing a second
+# copy in ~/.zcode/skills would show the same skill twice in its catalog.
+if [ ! -f "$HOME/.agents/skills/agentbus/SKILL.md" ]; then
+  install_skill "$HOME/.zcode/skills/agentbus"
+fi
 install_skill "$HOME/.kimi/skills/agentbus"               # kimi, if present
 
 if [ "$PLUGIN" = "1" ]; then
@@ -65,6 +74,7 @@ if [ "$PLUGIN" = "1" ]; then
    zcode:       Settings → Plugin Management → add the local marketplace
                 "$ROOT/integrations/zcode", then install "agentbus"
                 (plugin hooks need no hooks.enabled flag; they register themselves)
+                or simply use:  ./scripts/install.sh --zcode-hooks
    dsh:         native Cordis plugin; add a loader row or install the package:
                   dsh plugin --profile web add "$ROOT/integrations/dsh/plugin"
                 then follow docs/integrations/dsh.md for the insert row.
@@ -72,74 +82,69 @@ if [ "$PLUGIN" = "1" ]; then
 EOF
 fi
 
-if [ "$HOOKS" = "1" ]; then
+if [ "$CLAUDE_HOOKS" = "1" ] || [ "$ZCODE_HOOKS" = "1" ]; then
   echo "== wiring hooks"
-  command -v python3 >/dev/null || { echo "   !! python3 required for --hooks; skipping (see integrations/)"; HOOKS=0; }
-fi
-if [ "$HOOKS" = "1" ]; then
-  ROOT="$ROOT" python3 - <<'PY'
-import json, os, shutil, sys
+  command -v python3 >/dev/null || { echo "   !! python3 required; skipping hooks (see docs/integrations/)"; exit 1; }
+  ROOT="$ROOT" DO_CLAUDE="$CLAUDE_HOOKS" DO_ZCODE="$ZCODE_HOOKS" python3 - <<'PY'
+import json, os, shutil
 
-root = os.environ["ROOT"]
+def load_json(path):
+    if not os.path.exists(path):
+        return {}
+    shutil.copyfile(path, path + ".agentbus-bak")
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        print(f"   !! {path} is not valid JSON; skipped (backup at .agentbus-bak)")
+        return None
 
-def merge(path, hooks, backup=True):
-    cfg = {}
-    if os.path.exists(path):
-        shutil.copyfile(path, path + ".agentbus-bak")
-        try:
-            with open(path) as f:
-                cfg = json.load(f)
-        except json.JSONDecodeError:
-            print(f"   !! {path} is not valid JSON; skipped (backup at .agentbus-bak)")
-            return
-    # idempotent: drop previous agentbus hook entries, then add fresh ones
-    for event, entries in hooks.items():
-        kept = [e for e in cfg.get("hooks", {}).get(event, [])
-                if "agentbus" not in json.dumps(e)]
-        kept += entries
-        cfg.setdefault("hooks", {})[event] = kept
+def save_json(path, cfg):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
         f.write("\n")
-    print(f"   hooks: {path}" + (" (backup saved)" if os.path.exists(path + ".agentbus-bak") else ""))
+    print(f"   hooks: {path} (backup at .agentbus-bak)")
 
 cmd = lambda t: {"type": "command", "command": "agentbus hook", **t}
 
-claude_hooks = {
-    "SessionStart":    [{"hooks": [cmd({"timeout": 15})]}],
-    "UserPromptSubmit":[{"hooks": [cmd({"timeout": 5})]}],
-    "PostToolUse":     [{"hooks": [cmd({"timeout": 5})]}],
-    "Stop":            [{"hooks": [cmd({"timeout": 5})]}],
-    "SessionEnd":      [{"hooks": [cmd({"timeout": 5})]}],
-}
-merge(os.path.expanduser("~/.claude/settings.json"), claude_hooks)
+if os.environ.get("DO_CLAUDE") == "1":
+    path = os.path.expanduser("~/.claude/settings.json")
+    cfg = load_json(path)
+    if cfg is not None:
+        hooks = {
+            "SessionStart":     [{"hooks": [cmd({"timeout": 15})]}],
+            "UserPromptSubmit": [{"hooks": [cmd({"timeout": 5})]}],
+            "PostToolUse":      [{"hooks": [cmd({"timeout": 5})]}],
+            "Stop":             [{"hooks": [cmd({"timeout": 5})]}],
+            "SessionEnd":       [{"hooks": [cmd({"timeout": 5})]}],
+        }
+        for event, entries in hooks.items():
+            kept = [e for e in cfg.get("hooks", {}).get(event, [])
+                    if "agentbus" not in json.dumps(e)]
+            kept += entries
+            cfg.setdefault("hooks", {})[event] = kept
+        save_json(path, cfg)
 
-# ZCode: hooks.events.* + hooks.enabled
-zpath = os.path.expanduser("~/.zcode/cli/config.json")
-cfg = {}
-if os.path.exists(zpath):
-    shutil.copyfile(zpath, zpath + ".agentbus-bak")
-    with open(zpath) as f:
-        cfg = json.load(f)
-zcode_hooks = {
-    "SessionStart":    [{"hooks": [cmd({"timeoutMs": 15000})]}],
-    "UserPromptSubmit":[{"hooks": [cmd({"timeoutMs": 5000})]}],
-    "PostToolUse":     [{"hooks": [cmd({"timeoutMs": 5000})]}],
-    "Stop":            [{"hooks": [cmd({"timeoutMs": 5000})]}],
-}
-h = cfg.setdefault("hooks", {})
-h["enabled"] = True
-for event, entries in zcode_hooks.items():
-    kept = [e for e in h.get("events", {}).get(event, [])
-            if "agentbus" not in json.dumps(e)]
-    kept += entries
-    h.setdefault("events", {})[event] = kept
-os.makedirs(os.path.dirname(zpath), exist_ok=True)
-with open(zpath, "w") as f:
-    json.dump(cfg, f, indent=2, ensure_ascii=False)
-    f.write("\n")
-print(f"   hooks: {zpath} (backup saved)" if os.path.exists(zpath + ".agentbus-bak") else f"   hooks: {zpath}")
+if os.environ.get("DO_ZCODE") == "1":
+    path = os.path.expanduser("~/.zcode/cli/config.json")
+    cfg = load_json(path)
+    if cfg is not None:
+        # ZCode configuration hooks: hooks.enabled + hooks.events.<Event>.
+        hooks = {
+            "SessionStart":     [{"hooks": [cmd({"timeoutMs": 15000})]}],
+            "UserPromptSubmit": [{"hooks": [cmd({"timeoutMs": 5000})]}],
+            "PostToolUse":      [{"hooks": [cmd({"timeoutMs": 5000})]}],
+            "Stop":             [{"hooks": [cmd({"timeoutMs": 5000})]}],
+        }
+        h = cfg.setdefault("hooks", {})
+        h["enabled"] = True
+        events = h.setdefault("events", {})
+        for event, entries in hooks.items():
+            kept = [e for e in events.get(event, [])
+                    if "agentbus" not in json.dumps(e)]
+            events[event] = kept + entries
+        save_json(path, cfg)
 PY
 fi
 

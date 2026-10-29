@@ -177,7 +177,56 @@ func hookSessionKey(stdinSid string) string {
 		return sidKey(stdinSid)
 	}
 	if a := procinfo.Detect(); a.Pid > 0 {
+		// The agent process may be known to the hooks (sid) even when this CLI
+		// invocation is a plain Bash subprocess with no session env (ZCode).
+		if sid := lookupPidMap(busHome(), a.Pid, a.Start); sid != "" {
+			return sid
+		}
 		return fmt.Sprintf("pid:%d:%s", a.Pid, a.Start)
+	}
+	return ""
+}
+
+// pidMapPath is the per-agent-process identity file written by hook runs.
+// Filename includes the process start time so a reused pid cannot inherit an
+// old session.
+func pidMapPath(home string, pid int, start string) string {
+	return filepath.Join(home, "pidmap", fmt.Sprintf("%d-%s", pid, start))
+}
+
+// recordPidMap lets a later CLI call made from inside the agent (a Bash tool
+// subprocess with no session env) recover the sid identity by walking back to
+// the agent process. ZCode exposes no session variable to its Bash tool.
+func recordPidMap(home, key string) {
+	if !strings.HasPrefix(key, "sid:") {
+		return
+	}
+	a := procinfo.Detect()
+	if a.Pid <= 0 || a.Start == "" {
+		return
+	}
+	dir := filepath.Join(home, "pidmap")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	path := pidMapPath(home, a.Pid, a.Start)
+	if existing, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(existing)) == key {
+		return // already mapped
+	}
+	_ = os.WriteFile(path, []byte(key+"\n"), 0o600)
+}
+
+func lookupPidMap(home string, pid int, start string) string {
+	if pid <= 0 || start == "" {
+		return ""
+	}
+	b, err := os.ReadFile(pidMapPath(home, pid, start))
+	if err != nil {
+		return ""
+	}
+	key := strings.TrimSpace(string(b))
+	if strings.HasPrefix(key, "sid:") {
+		return key
 	}
 	return ""
 }
@@ -300,6 +349,7 @@ func cmdHook(args []string) int {
 	if key == "" {
 		return 0 // not called from inside an agent session
 	}
+	recordPidMap(home, key)
 	switch h.EventName {
 	case "SessionStart":
 		pid, pidStart, label := detectAgent()
