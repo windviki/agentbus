@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -46,6 +47,8 @@ func run(args []string) int {
 		return cmdRegister(rest)
 	case "who":
 		return cmdWho(rest)
+	case "peers":
+		return cmdPeers(rest)
 	case "announce":
 		return cmdAnnounce(rest)
 	case "send":
@@ -90,6 +93,7 @@ Usage:
                                              # hook-output JSON (nothing when idle)
   agentbus register [--name bob] [--agent A] # join manually (name auto-generated if omitted)
   agentbus who [-v|--json]                   # list live sessions + what they're doing
+  agentbus peers [--cwd DIR] [--json]        # live sessions in YOUR worktree / repo
   agentbus announce "fixing auth in wt-auth" # publish your status
   agentbus send <name|all> "message"         # message a peer / broadcast
                                              #   --kind chat|request|reply|notice|urgent
@@ -252,6 +256,62 @@ func gitBranch(dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// gitRepo returns the git common dir for dir, so two worktrees of the same
+// repository compare equal. Empty for non-git directories.
+func gitRepo(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	if err == nil {
+		if p := strings.TrimSpace(string(out)); p != "" {
+			return p
+		}
+	}
+	// Older git: fall back to the top-level directory.
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer cancel2()
+	out, err = exec.CommandContext(ctx2, "git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// samePath reports whether a and b are the same directory or one contains the
+// other (a session started in a subdirectory of the workspace).
+func samePath(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if a == b {
+		return true
+	}
+	sep := string(os.PathSeparator)
+	return strings.HasPrefix(a, b+sep) || strings.HasPrefix(b, a+sep)
+}
+
+// classifyPeers splits other sessions into same worktree, same repo (a
+// different worktree), and unrelated. The caller knows its own cwd/repo.
+func classifyPeers(cwd, repo string, sessions []bus.Session) (same, sameRepo, other []bus.Session) {
+	for _, s := range sessions {
+		exact := cwd != "" && filepath.Clean(cwd) == filepath.Clean(s.Cwd)
+		switch {
+		case exact || (repo != "" && s.Repo == repo && samePath(cwd, s.Cwd)):
+			// Same directory, or a nested directory of the same git worktree.
+			same = append(same, s)
+		case repo != "" && s.Repo == repo:
+			sameRepo = append(sameRepo, s)
+		default:
+			other = append(other, s)
+		}
+	}
+	return
+}
+
 func newFlagSet(name string) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -333,6 +393,35 @@ func cmdStatus(args []string) int {
 	return 0
 }
 
+// kimiRosterMarker is a per-session marker so Kimi's first prompt gets the
+// roster exactly once (Kimi ignores SessionStart stdout).
+func kimiRosterMarker(home, key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return filepath.Join(home, "roster", fmt.Sprintf("%x", sum))
+}
+
+func kimiFirstRoster(home, key, cwd string) {
+	marker := kimiRosterMarker(home, key)
+	if _, err := os.Stat(marker); err == nil {
+		return
+	}
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	pid, pidStart, label := detectAgent()
+	repo := gitRepo(cwd)
+	resp, err := client.Call(home, true, proto.Request{
+		Op: "register", ID: key, Want: os.Getenv("AGENTBUS_NAME"), Agent: label, Cwd: cwd,
+		Repo: repo, Branch: gitBranch(cwd), Pid: pid, PidStart: pidStart,
+	})
+	if err != nil || !resp.Ok {
+		return
+	}
+	fmt.Print(joinSummary(resp, cwd, repo))
+	_ = os.MkdirAll(filepath.Dir(marker), 0o700)
+	_ = os.WriteFile(marker, []byte("1\n"), 0o600)
+}
+
 // cmdHook is the single hook entrypoint wired into agent configs. It must
 // never break the host session: all failures exit 0 silently (logged to
 // $AGENTBUS_HOME/hook.log).
@@ -364,16 +453,19 @@ func cmdHook(args []string) int {
 		}
 		resp, err := client.Call(home, true, proto.Request{
 			Op: "register", ID: key, Want: os.Getenv("AGENTBUS_NAME"), Agent: label, Cwd: cwd,
-			Branch: gitBranch(cwd), Pid: pid, PidStart: pidStart,
+			Repo: gitRepo(cwd), Branch: gitBranch(cwd), Pid: pid, PidStart: pidStart,
 		})
 		if err != nil || !resp.Ok {
 			hookFail(home, err, resp)
 			return 0
 		}
 		if !kimi {
-			fmt.Print(hookContextJSON("SessionStart", joinSummary(resp)))
+			fmt.Print(hookContextJSON("SessionStart", joinSummary(resp, cwd, gitRepo(cwd))))
 		}
 	case "UserPromptSubmit":
+		if kimi {
+			kimiFirstRoster(home, key, h.Cwd)
+		}
 		if msgs := pollForHook(home, key); len(msgs) > 0 {
 			if kimi {
 				fmt.Print(incomingText(msgs))
@@ -415,6 +507,9 @@ func cmdHook(args []string) int {
 		}
 		fmt.Print(stopBlockJSON(stopReason(resp.Messages)))
 	case "SessionEnd":
+		if kimi {
+			_ = os.Remove(kimiRosterMarker(home, key))
+		}
 		_, _ = client.Call(home, true, proto.Request{Op: "leave", ID: key})
 	}
 	return 0
@@ -493,7 +588,7 @@ func cmdRegister(args []string) int {
 	}
 	resp, err := client.Call(busHome(), true, proto.Request{
 		Op: "register", ID: key, Want: *name, Agent: label, Cwd: cwd,
-		Branch: gitBranch(cwd), Pid: pid, PidStart: pstart,
+		Repo: gitRepo(cwd), Branch: gitBranch(cwd), Pid: pid, PidStart: pstart,
 	})
 	if err != nil {
 		return fail("%v", err)
@@ -509,7 +604,7 @@ func cmdRegister(args []string) int {
 		printJSON(resp)
 		return 0
 	}
-	fmt.Print(joinSummary(resp))
+	fmt.Print(joinSummary(resp, cwd, gitRepo(cwd)))
 	return 0
 }
 
@@ -533,6 +628,73 @@ func cmdWho(args []string) int {
 		return 0
 	}
 	printRoster(resp.Sessions, *verbose || *verbose2)
+	return 0
+}
+
+// cmdPeers shows only the sessions that matter for conflict avoidance: the
+// same worktree, then other worktrees of the same repo, then everyone else.
+func cmdPeers(args []string) int {
+	fs := newFlagSet("peers")
+	cwdF := fs.String("cwd", "", "workspace directory (default: $PWD)")
+	asJSON := fs.Bool("json", false, "")
+	if err := fs.Parse(args); err != nil {
+		return fail("bad flags: %v", err)
+	}
+	cwd := *cwdF
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	resp, err := client.Call(busHome(), true, proto.Request{Op: "who"})
+	if err != nil {
+		return fail("%v", err)
+	}
+	if !resp.Ok {
+		return fail("%s", resp.Error)
+	}
+	key := sessionKey("")
+	var sessions []bus.Session
+	for _, s := range resp.Sessions {
+		if key != "" && s.ID == key {
+			continue
+		}
+		sessions = append(sessions, s)
+	}
+	for i := range sessions {
+		if sessions[i].Repo == "" && sessions[i].Cwd != "" {
+			sessions[i].Repo = gitRepo(sessions[i].Cwd)
+		}
+	}
+	repo := gitRepo(cwd)
+	same, sameRepo, other := classifyPeers(cwd, repo, sessions)
+	if *asJSON {
+		printJSON(map[string]any{
+			"cwd": cwd, "repo": repo,
+			"same_worktree": same, "same_repo": sameRepo, "other": other,
+		})
+		return 0
+	}
+	fmt.Printf("[agentbus] workspace %s%s\n", tilde(cwd), func() string {
+		if repo != "" {
+			return " · repo " + tilde(repo)
+		}
+		return ""
+	}())
+	if len(same) == 0 && len(sameRepo) == 0 {
+		fmt.Println("[agentbus] no parallel session in this workspace")
+	} else {
+		if len(same) > 0 {
+			fmt.Printf("SAME WORKTREE (%d) — coordinate before editing shared files\n", len(same))
+			printRoster(same, false)
+		}
+		if len(sameRepo) > 0 {
+			fmt.Printf("SAME REPO, OTHER WORKTREE (%d)\n", len(sameRepo))
+			printRoster(sameRepo, false)
+		}
+	}
+	if len(other) > 0 {
+		fmt.Printf("OTHER LIVE SESSIONS (%d)\n", len(other))
+		printRoster(other, false)
+	}
 	return 0
 }
 

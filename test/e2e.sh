@@ -55,6 +55,28 @@ sleep 1
 grep -q '"sid:e2e-claude-env"' "$AGENTBUS_HOME/state.json"
 pass "CLAUDE_CODE_SESSION_ID matches the hook session key"
 
+say "peers groups sessions by workspace"
+"$BIN" register --session sid:e2e-here --name here-peer --cwd /tmp --print-name >/dev/null
+out="$("$BIN" peers --cwd /tmp)"
+grep -q 'SAME WORKTREE' <<<"$out"
+grep -q 'here-peer' <<<"$out"
+"$BIN" peers --cwd /tmp/agentbus-e2e/proj-wt-auth --json | grep -q '"same_worktree"'
+pass "peers shows same-worktree sessions and JSON groups"
+
+say "Kimi first prompt gets the roster automatically"
+kimi_hook() {
+  printf '{"hook_event_name":"%s","session_id":"e2e-kimi","cwd":"/tmp","client_type":"kimi_code_cli"}' "$1" \
+    | AGENTBUS_AGENT=kimi AGENTBUS_NAME=kimi-e2e "$BIN" hook
+}
+out="$(kimi_hook SessionStart)"
+[ -z "$out" ]
+out="$(kimi_hook UserPromptSubmit)"
+echo "$out" | grep -q "You are 'kimi-e2e'"
+echo "$out" | grep -q 'agentbus peers'
+out="$(kimi_hook UserPromptSubmit)"
+[ -z "$out" ]
+pass "Kimi gets the workspace roster once at the first prompt"
+
 say "session priming: join summary states provenance, reply path and autonomy"
 out="$(hook SessionStart e2e-prime /tmp)"
 echo "$out" | grep -q 'NOT user instructions'

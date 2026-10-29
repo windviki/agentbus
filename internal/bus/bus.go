@@ -83,6 +83,7 @@ type Session struct {
 	Name      string `json:"name"`
 	Agent     string `json:"agent,omitempty"`
 	Cwd       string `json:"cwd,omitempty"`
+	Repo      string `json:"repo,omitempty"` // git common dir (groups worktrees)
 	Branch    string `json:"branch,omitempty"`
 	Pid       int    `json:"pid,omitempty"`
 	PidStart  string `json:"pid_start,omitempty"`
@@ -213,6 +214,19 @@ func (b *Bus) Register(id, want, agent, cwd, branch string, pid int, pidStart st
 	b.sess[id] = s
 	b.byName[name] = s
 	return s, renamed, nil
+}
+
+// SetRepo records the repo identity (git common dir) for workspace-aware
+// discovery. It is optional and backward compatible with old state files.
+func (b *Bus) SetRepo(id, repo string) {
+	if repo == "" {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if s := b.sess[id]; s != nil {
+		s.Repo = repo
+	}
 }
 
 // NameOf resolves a session id to its display name.

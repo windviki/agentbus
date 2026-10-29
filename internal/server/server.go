@@ -140,6 +140,7 @@ func (s *Server) dispatch(r *proto.Request) (proto.Response, bool) {
 		if err != nil {
 			return errResp(err), false
 		}
+		s.b.SetRepo(r.ID, r.Repo)
 		resp.Name, resp.RenamedFrom, resp.Agent = sess.Name, renamed, sess.Agent
 		resp.Sessions = others(s.b.Who(), sess.Name)
 		s.save()

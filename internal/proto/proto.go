@@ -13,6 +13,7 @@ type Request struct {
 	Want     string `json:"want,omitempty"`
 	Agent    string `json:"agent,omitempty"`
 	Cwd      string `json:"cwd,omitempty"`
+	Repo     string `json:"repo,omitempty"`
 	Branch   string `json:"branch,omitempty"`
 	Pid      int    `json:"pid,omitempty"`
 	PidStart string `json:"pid_start,omitempty"`
