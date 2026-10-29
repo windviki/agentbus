@@ -372,3 +372,29 @@ func TestLastPeerReplyTarget(t *testing.T) {
 		t.Fatalf("carol should still be reachable, got %+v", last)
 	}
 }
+
+func TestHumanRecipientAndReplyTarget(t *testing.T) {
+	b, _ := newTestBus()
+	b.Register("sid:a", "alice", "", "", "", 0, "")
+	m, n, dup, err := b.Send("alice", "user", "ack for the human", KindReply, "")
+	if err != nil || n != 1 || dup || m.To != "user" {
+		t.Fatalf("send to human: %v n=%d dup=%v m=%+v", err, n, dup, m)
+	}
+	if len(b.Who()) != 1 {
+		t.Fatalf("human target must not create a session")
+	}
+	if log := b.Log(1); len(log) != 1 || log[0].ID != m.ID {
+		t.Fatalf("human message must be in the global log: %+v", log)
+	}
+	// a human message delivered to alice is a valid reply target
+	if _, _, _, err := b.Send("user", "alice", "please stop", KindUrgent, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := b.Poll("sid:a", true, 0); err != nil {
+		t.Fatal(err)
+	}
+	last, ok := b.LastPeer("sid:a", "user")
+	if !ok || last.Body != "please stop" {
+		t.Fatalf("human message should be addressable, got %+v ok=%v", last, ok)
+	}
+}

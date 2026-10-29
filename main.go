@@ -166,6 +166,13 @@ func hookSessionKey(stdinSid string) string {
 	if v := os.Getenv("CLAUDE_SESSION_ID"); v != "" {
 		return sidKey(v)
 	}
+	// Claude Code exports this to Bash tool subprocesses (hooks receive the
+	// same value as session_id). Without it, CLI calls made by the agent are
+	// attributed to the human "user" because the pid fallback does not match
+	// the sid-keyed registration.
+	if v := os.Getenv("CLAUDE_CODE_SESSION_ID"); v != "" {
+		return sidKey(v)
+	}
 	if stdinSid != "" {
 		return sidKey(stdinSid)
 	}
@@ -479,6 +486,16 @@ func cmdAnnounce(args []string) int {
 	return 0
 }
 
+// guardBody rejects a body that starts with "--". Go's flag package stops
+// parsing at the first positional argument, so `send bob "hi" --kind reply`
+// would silently fold the flag into the message body. Fail loudly instead.
+func guardBody(body string) error {
+	if strings.HasPrefix(strings.TrimSpace(body), "--") {
+		return fmt.Errorf(`message must not start with "--" — put flags before the recipient, e.g. agentbus send --kind reply bob "text"`)
+	}
+	return nil
+}
+
 func cmdSend(args []string) int {
 	fs := newFlagSet("send")
 	session := fs.String("session", "", "session key override")
@@ -496,6 +513,9 @@ func cmdSend(args []string) int {
 		*kind = *kindAlias
 	}
 	to, body := fs.Arg(0), strings.Join(fs.Args()[1:], " ")
+	if err := guardBody(body); err != nil {
+		return fail("%v", err)
+	}
 	req := proto.Request{Op: "send", To: to, Body: body, Kind: *kind, ReplyTo: *replyTo}
 	if key := sessionKey(*session); key != "" {
 		req.ID = key
@@ -537,6 +557,9 @@ func cmdAsk(args []string) int {
 		return fail("no agent session detected; run inside an agent session or pass --session <key>")
 	}
 	to, body := fs.Arg(0), strings.Join(fs.Args()[1:], " ")
+	if err := guardBody(body); err != nil {
+		return fail("%v", err)
+	}
 	resp, err := client.Call(busHome(), true, proto.Request{
 		Op: "ask", ID: key, To: to, Body: body, WaitMs: *waitS * 1000,
 	})
@@ -573,6 +596,9 @@ func cmdReply(args []string) int {
 		return fail("no agent session detected; run inside an agent session or pass --session <key>")
 	}
 	body := strings.Join(fs.Args(), " ")
+	if err := guardBody(body); err != nil {
+		return fail("%v", err)
+	}
 	resp, err := client.Call(busHome(), true, proto.Request{Op: "reply", ID: key, To: *to, Body: body})
 	if err != nil {
 		return fail("%v", err)
@@ -604,6 +630,9 @@ func cmdNotify(args []string) int {
 		return fail("usage: agentbus notify <name|all> \"information\"")
 	}
 	to, body := fs.Arg(0), strings.Join(fs.Args()[1:], " ")
+	if err := guardBody(body); err != nil {
+		return fail("%v", err)
+	}
 	req := proto.Request{Op: "send", To: to, Body: body, Kind: "notice"}
 	if key := sessionKey(*session); key != "" {
 		req.ID = key

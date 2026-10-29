@@ -49,6 +49,12 @@ grep -q 'bob' <<<"$out"
 grep -q 'fixing auth flow' <<<"$out"
 pass "roster correct"
 
+say "Claude Code Bash identity comes from CLAUDE_CODE_SESSION_ID"
+CLAUDE_CODE_SESSION_ID=e2e-claude-env "$BIN" register --agent claude-code --print-name >/dev/null
+sleep 1
+grep -q '"sid:e2e-claude-env"' "$AGENTBUS_HOME/state.json"
+pass "CLAUDE_CODE_SESSION_ID matches the hook session key"
+
 say "session priming: join summary states provenance, reply path and autonomy"
 out="$(hook SessionStart e2e-prime /tmp)"
 echo "$out" | grep -q 'NOT user instructions'
@@ -212,6 +218,10 @@ say "human without a session sends as 'user'"
 out="$(hook UserPromptSubmit e2e-b)"
 echo "$out" | grep -q 'human checking in'
 pass "human message delivered"
+"$BIN" reply --session sid:e2e-b --to user "ack: human message received" >/dev/null
+out="$("$BIN" log -n 8)"
+grep -q "$nameB→user: ack: human message received" <<<"$out"
+pass "agent can reply to the human pseudo-recipient"
 
 "$BIN" stop >/dev/null
 printf '\nALL E2E TESTS PASSED\n'

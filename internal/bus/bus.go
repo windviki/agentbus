@@ -273,6 +273,11 @@ func (b *Bus) Send(from, to, body, kind, replyTo string) (Msg, int, bool, error)
 	if broadcast {
 		dest = "all"
 	}
+	// "user" is the human side of the bus: there is no session process to
+	// deliver to, but the message belongs in the global log/dashboard so a
+	// human can read it. This makes `agentbus reply` work for human messages
+	// (for example an urgent interrupt sent from the CLI/dashboard).
+	human := dest == "user"
 	m := Msg{ID: b.nextIDLocked(), ReplyTo: replyTo, From: from, To: dest, Kind: kind, Body: body, Ts: now}
 
 	key := from + "\x00" + dest + "\x00" + body
@@ -281,7 +286,9 @@ func (b *Bus) Send(from, to, body, kind, replyTo string) (Msg, int, bool, error)
 	}
 
 	var targets []*Session
-	if broadcast {
+	if human {
+		// no session inbox; the message is delivered to the log below
+	} else if broadcast {
 		for _, s := range b.sess {
 			if s.Name != from {
 				targets = append(targets, s)
@@ -307,6 +314,9 @@ func (b *Bus) Send(from, to, body, kind, replyTo string) (Msg, int, bool, error)
 	}
 	b.dup[key] = dupEntry{m, now}
 	b.bumpRateLocked(from, now)
+	if human {
+		return m, 1, false, nil
+	}
 	return m, len(targets), false, nil
 }
 
@@ -430,14 +440,16 @@ func (b *Bus) LastPeer(id, peer string) (Msg, bool) {
 	q := b.mine[s.Name]
 	for i := len(q) - 1; i >= 0; i-- {
 		m := q[i]
-		if m.From == "" || m.From == "user" {
+		if m.From == "" {
 			continue
 		}
 		if peer != "" && strings.ToLower(m.From) != peer {
 			continue
 		}
-		if b.byName[m.From] == nil {
-			continue // peer already gone: replying would fail
+		// "user" is the addressable human side; other senders must still be
+		// live for a reply to reach them.
+		if m.From != "user" && b.byName[m.From] == nil {
+			continue
 		}
 		return m, true
 	}
