@@ -115,8 +115,9 @@ message envelope 靠拢（`messageId` / `replyTo` / `kind`），HTTP 边界可�
 其它消息原样留在队列里，仍按梯子投递。
 
 `reply` 的答复对象：daemon 记住每个会话最近投递的 5 条消息，`agentbus reply
-"..."` 自动选中其中最新的一条**在线对端**消息（跳过人类 `user` 和已离开的
-会话），以 kind=reply + replyTo 发出。这样注入文本不必携带长 messageId，agent
+"..."` 自动选中其中最新的一条**可寻址消息**（在线对端，或人类 `user`；跳过已
+离开的会话），以 kind=reply + replyTo 发出。人类 `user` 是虚拟收件人：消息只进
+全局日志/看板，没有进程收件箱——这让人工中断也能被定向确认，而不必广播。这样注入文本不必携带长 messageId，agent
 也不会因为记错 id 而回复失败；需要精确对应时仍可用
 `send --kind reply --reply-to <id>`。
 

@@ -93,6 +93,24 @@ RUN_INTEROP=1 RUN_INTEROP_BASELINE=1 ./test/interop.sh   # 再加无 primer 基�
 最近一次结果（2026-10-29）：DSH 插件、Claude primed 全部 PASS；无 primer
 基线忽略 peer 消息。行为分析见 [adoption.md](adoption.md) §6。
 
+### 长程并发场景（半自动，人工核对）
+
+双 agent 并发任务不确定性高，没有固定断言脚本；按以下步骤复现，结果写入
+[adoption.md](adoption.md) §6。
+
+1. 建共享仓库：`TASK.md` 要求 calc + words 两半，且都要改
+   `toolkit/__init__.py` 与 `README.md`；
+2. 起 daemon；先起 DSH words 半（`DSH_PERMISSION_MODE=danger-full-access`），
+   等它注册；再起 Claude calc 半（`--plugin-dir`），prompt **不提 agentbus**；
+3. 运行中向两边各发一条 `agentbus send --from user --kind urgent <name>
+   "reply 'ack-running' then continue"`；
+4. 结束后跑 `python3 -m unittest discover -s tests`，核对 `__init__.py`/README
+   内容与 `agentbus log`。
+
+最近结果（2026-10-29）：双方自动 `who`/`announce`；DSH 发 2 条 request、Claude
+3 条 reply（含分工协商与两条 urgent ack）；21 tests OK；无文件覆盖。过程中发现
+并修复了 Claude Bash 身份、人类回复、flag 误用三类问题（见 adoption.md）。
+
 ## 6. 提交前检查清单
 
 ```bash

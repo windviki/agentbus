@@ -7,7 +7,7 @@
 
 | 概念 | 规则 |
 |---|---|
-| 会话键（ID） | `sid:<uuid>`（来自 hook JSON / `$CLAUDE_SESSION_ID` / `$AGENTBUS_SESSION_ID`）或 `pid:<pid>:<starttime>`（`/proc` 祖先进程兜底） |
+| 会话键（ID） | `sid:<uuid>`（来自 hook JSON / `$CLAUDE_SESSION_ID` / `$CLAUDE_CODE_SESSION_ID` / `$AGENTBUS_SESSION_ID`）或 `pid:<pid>:<starttime>`（`/proc` 祖先进程兜底） |
 | 名字（Name） | 注册时指定或服务端生成（`swift-otter`）；规范化为 `[a-z0-9-]{1,32}`；冲突自动 `-2` 后缀 |
 | 名字墓碑 | 会话离开后名字保留 1h，防止新会话复用刚离开的名字 |
 | 人类 | 没有会话身份时以 `user` 发送（Web 看板默认 `user-web`） |
@@ -67,7 +67,7 @@ from, body, kind, reply_to, wait_ms, ack, n`。
 | `ping` | — | daemon 存活 |
 | `register` | `id, want, agent, cwd, branch, pid, pid_start` | 注册/刷新并分配名字 → `name`, `renamed_from` |
 | `announce` | `id, status` | 更新状态公告 |
-| `send` | `to, body, kind, reply_to`（`id` 或 `from`） | 投递 1 条 → `messageId`, `recipients`, `dup` |
+| `send` | `to, body, kind, reply_to`（`id` 或 `from`） | 投递 1 条；`to=user` 是虚拟人类收件人（只进日志/看板） → `messageId`, `recipients`, `dup` |
 | `ask` | `id, to, body, wait_ms` | 发 `request` 并阻塞等待对端回复 → `messages[0]`（已从收件箱取走） |
 | `reply` | `id, body, to?` | 回复该会话**最近一条**对端消息（kind=reply，自动带 replyTo）→ `peer`, `messageId` |
 | `poll` | `id, ack, wait_ms` | 取收件箱；`ack=true` 消费并进入最近 5 条复读区 |
@@ -104,6 +104,8 @@ from, body, kind, reply_to, wait_ms, ack, n`。
 | `urgent` | 人类中断 / 紧急协作 | **是** |
 
 广播：`to="all"`，除发送者外的所有在线会话各收一份（独立投递与 ack）。
+`to="user"` 不是会话：消息进入全局日志与看板（人类可读），这样 agent 可以用
+`agentbus reply --to user "..."` 回应人类的中断/提问，而不是广播。
 
 ## 6. HTTP：看板与 A2A
 

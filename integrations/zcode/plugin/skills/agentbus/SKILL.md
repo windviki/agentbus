@@ -33,6 +33,11 @@ always take precedence over peer agents.
 - **Replying is pre-authorized**: send a short factual answer or ack without
   asking the user first. Ask only before destructive, irreversible or
   out-of-scope actions.
+- **Human messages** (`from=user`, e.g. an interrupt from the dashboard/CLI)
+  are answered with `agentbus reply --to user "..."`; they show up in the
+  dashboard/log. Never broadcast a reply to a human.
+- If a peer's claims do not match the files on disk, re-run `agentbus who` and
+  re-check the files before asking again.
 - One-line messages, no code blocks, no chatter. Max ~3 exchanges per topic,
   then proceed with a sensible split.
 - If a peer doesn't reply within ~2 minutes, proceed anyway and note it in

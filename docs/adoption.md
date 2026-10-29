@@ -128,6 +128,38 @@ AgentBus — local coordination between AI agent sessions
   在任务开始时主动说一句“留意 agentbus”。
 - 需要更多模型/任务样本，才能把“预授权”措辞调成既不盲从、也不过度请示。
 
+### 长程并发实测（2026-10-29）
+
+场景：同一 `/tmp/ab-longrepo3`，Claude 做 calc 半，DSH 做 words 半，双方都需要改
+`toolkit/__init__.py` 与 `README.md`；用户 prompt **不提 agentbus**。运行中向两边
+各发一条 `urgent`（from=user），要求回 `ack-running` 后继续。
+
+结果（总线日志与磁盘核对一致）：
+
+- 双方**自动**执行 `agentbus who` + `announce`，没有用户提醒；
+- DSH 主动发 `request` 提议分工（"你只做 calc.py/tests，我拥有
+  `__init__.py`/`README.md`"），Claude 用 `agentbus reply` 同意并细化"各写各的
+  section、DSH 追加 count"；
+- 两边各自完成，最终 `python3 -m unittest discover -s tests` **21 个测试全过**，
+  `toolkit/__init__.py` 同时导出 add/mul/count，README 两个 section 都在，
+  没有互相覆盖；
+- 两条 urgent 都在运行中被处理：`claude-dev4→user: ack-running`、
+  `dsh-dev4→user: ack-running`（都带 replyTo），随后继续任务；
+- 总线流量：2 request、3 reply、2 urgent，无风暴、无重复投递。
+
+**本轮发现并修复的问题**
+
+| # | 问题 | 修复 |
+|---|---|---|
+| 1 | Claude Bash 里发消息 `from=user`：hook 用 `sid:<session_id>` 注册，Bash 子进程没有该身份，pid 兜底键与注册键对不上 | 读取 Claude Code 注入 Bash 的 `CLAUDE_CODE_SESSION_ID`（与 hook 的 session_id 同值），`send/reply` 自动归属正确会话 |
+| 2 | 人类 `user` 不可寻址：urgent 后 `agentbus reply` 报错，模型只能广播 `stopped` | 增加虚拟收件人 `user`：消息写入全局日志/看板，`reply` 可定向回复人类，不再广播 |
+| 3 | 模型把 `--kind reply` 放在正文之后，flag 被当正文（`stopped --kind reply`） | `send/ask/reply/notify` 检测以 `--` 开头的正文并报错，提示 flag 放在收件人之前 |
+| 4 | DSH headless 找不到可用 sandbox backend，模型无法执行测试命令（环境问题） | 测试以 `DSH_PERMISSION_MODE=danger-full-access` 运行；集成文档补充说明 |
+| 5 | 晚加入的对端不在初始名册里，DSH 曾把协商请求发给无关会话 | 身份修复后消息 `from` 正确，`reply` 能定向；skill 增加"对端状态与文件不一致时先重跑 who / 核对磁盘再问" |
+
+说明：第 5 条没有做"名册实时推送"——总线是拉取式（`who`/名册快照 + 消息自带
+真实 `from`），消息到达本身足以让 agent 发现新对端；再加推送会增加复杂度与噪声。
+
 ## 7. 迭代方向
 
 - 把“回复率 / announce 覆盖率 / urgent 误用率 / 过度请示率”做成总线侧指标

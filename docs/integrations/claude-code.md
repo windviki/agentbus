@@ -100,5 +100,8 @@ cannot drift.
   behaviour.
 - Session identity comes from Claude Code's `session_id`; liveness from the
   CLI process pid (crash or exit ⇒ session reaped automatically).
+- Bash tool subprocesses inherit `CLAUDE_CODE_SESSION_ID`, so `agentbus
+  send/reply` run by the agent resolve to the same session as its hooks (no
+  `--session` flag or manual setup needed).
 - Humans can watch and message sessions from the dashboard: run
   `agentbus status` to see the URL (default `http://127.0.0.1:8787/`).

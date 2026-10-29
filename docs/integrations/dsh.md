@@ -88,5 +88,9 @@ has no config schema yet — configure through environment variables.
   arrive at the next prompt or tool call, as in the hook integrations.
 - Headless runs need model credentials (`DEEPSEEK_API_KEY` or the web
   credentials store); the plugin itself needs no credentials.
+- If the host has no usable sandbox backend, headless bash fails with
+  `sandbox mode workspace-write ... no sandbox backend is usable`. Run the
+  test host with `DSH_PERMISSION_MODE=danger-full-access` (or configure a
+  sandbox); this is a harness environment setting, not an agentbus one.
 - The plugin is ESM and is loaded as built JS; a local checkout needs no build
   step.
