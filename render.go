@@ -107,23 +107,30 @@ func rosterLine(s bus.Session) string {
 // batch states where it came from and what a peer message does/does not mean.
 func incomingText(msgs []bus.Msg) string {
 	var b strings.Builder
-	peer := false
-	lastPeer := ""
+	peer, human := false, false
+	lastPeer, lastHuman := "", ""
 	for _, m := range msgs {
-		if m.From != "" && m.From != "user" {
+		switch {
+		case m.From == "user" || m.From == "user-web":
+			human = true
+			lastHuman = m.From
+		case m.From != "":
 			peer = true
 			lastPeer = m.From
 		}
 	}
-	if peer {
+	switch {
+	case peer && human:
+		fmt.Fprintf(&b, "[agentbus] %d message%s (mixed: peer agents and the human user):\n", len(msgs), plural(len(msgs)))
+	case peer:
 		fmt.Fprintf(&b, "[agentbus] %d peer message%s (from other agent sessions, not the user):\n", len(msgs), plural(len(msgs)))
-	} else {
+	default:
 		fmt.Fprintf(&b, "[agentbus] %d message%s from the human user (via the bus):\n", len(msgs), plural(len(msgs)))
 	}
 	for _, m := range msgs {
 		fmt.Fprintf(&b, "[%s] %s\n", time.Unix(m.Ts, 0).Format("15:04"), msgCompact(m))
 	}
-	if !peer {
+	if !peer && !human {
 		b.WriteString("[agentbus] no reply needed — continue with your task\n")
 		return b.String()
 	}
@@ -133,8 +140,12 @@ func incomingText(msgs []bus.Msg) string {
 			needsReply = true
 		}
 	}
-	if needsReply && lastPeer != "" {
-		fmt.Fprintf(&b, "[agentbus] reply: agentbus reply \"...\"  (or agentbus send %s \"...\") · roster: agentbus who\n", lastPeer)
+	target := lastPeer
+	if lastHuman != "" {
+		target = lastHuman
+	}
+	if needsReply && target != "" {
+		fmt.Fprintf(&b, "[agentbus] reply: agentbus reply --to %s \"...\"  (or agentbus send %s \"...\") · roster: agentbus who\n", target, target)
 	} else {
 		b.WriteString("[agentbus] no reply needed — act only if it affects your work · roster: agentbus who\n")
 	}
@@ -145,7 +156,17 @@ func incomingText(msgs []bus.Msg) string {
 // this text when urgent messages arrive while it was about to go idle.
 func stopReason(msgs []bus.Msg) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Urgent agentbus peer message%s (from another agent session, not the user):\n", plural(len(msgs)))
+	human := false
+	for _, m := range msgs {
+		if m.From == "user" || m.From == "user-web" {
+			human = true
+		}
+	}
+	if human {
+		fmt.Fprintf(&b, "Urgent agentbus message%s from the human user (via the bus):\n", plural(len(msgs)))
+	} else {
+		fmt.Fprintf(&b, "Urgent agentbus peer message%s (from another agent session, not the user):\n", plural(len(msgs)))
+	}
 	for _, m := range msgs {
 		fmt.Fprintf(&b, "[%s] %s\n", time.Unix(m.Ts, 0).Format("15:04"), msgCompact(m))
 	}

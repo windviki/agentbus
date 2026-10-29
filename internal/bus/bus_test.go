@@ -411,3 +411,31 @@ func TestHumanRecipientAndReplyTarget(t *testing.T) {
 		t.Fatalf("reply to user-web: %v n=%d", err, n)
 	}
 }
+
+func TestLastPeerSeesPeekedAndPersistedHistory(t *testing.T) {
+	b, _ := newTestBus()
+	b.Register("sid:a", "alice", "", "", "", 0, "")
+	b.Register("sid:b", "bob", "", "", "", 0, "")
+	m, _, _, err := b.Send("bob", "alice", "peeked request", KindRequest, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// inbox --peek: ack=false leaves the message out of "mine"
+	if _, _, err := b.Poll("sid:a", false, 0); err != nil {
+		t.Fatal(err)
+	}
+	if msg, ok := b.LastPeer("sid:a", ""); !ok || msg.ID != m.ID {
+		t.Fatalf("peeked message should be a reply target, got %+v ok=%v", msg, ok)
+	}
+	// daemon restart: snapshot/restore must keep the target reachable
+	b2 := New(Options{TTLSeconds: 3600, MsgTTLSeconds: 3600, TombTTLSeconds: 600, RatePerMinute: 5})
+	b2.Restore(b.Snapshot())
+	if msg, ok := b2.LastPeer("sid:a", "bob"); !ok || msg.ID != m.ID {
+		t.Fatalf("history must survive restart, got %+v ok=%v", msg, ok)
+	}
+	// a message addressed to someone else is not a target
+	b.Send("bob", "carol", "not for alice", KindChat, "")
+	if msg, ok := b.LastPeer("sid:a", ""); !ok || msg.ID != m.ID {
+		t.Fatalf("other recipient leaked into reply target: %+v", msg)
+	}
+}

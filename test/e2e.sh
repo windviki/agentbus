@@ -129,6 +129,14 @@ echo "$out" | grep -q '\[reply\]'
 echo "$out" | grep -q 'pong from bob'
 pass "reply sets kind=reply and replyTo on the newest peer message"
 
+say "reply: inbox --peek is enough (no ack required)"
+"$BIN" send --session sid:e2e-b "$nameA" "peeked but not delivered" >/dev/null
+"$BIN" inbox --session sid:e2e-a --peek >/dev/null
+"$BIN" reply --session sid:e2e-a --to "$nameB" "answered after peek" >/dev/null
+out="$("$BIN" log -n 12)"
+grep -q "$nameA→$nameB: answered after peek" <<<"$out"
+pass "peeked message is a valid reply target"
+
 say "unknown recipient gives a helpful error"
 if "$BIN" send --session sid:e2e-a nobod-y "hi" 2>/dev/null; then
   echo "FATAL: send to unknown session should fail"; exit 1
@@ -217,7 +225,8 @@ say "human without a session sends as 'user'"
 "$BIN" send --from user "$nameB" "human checking in" >/dev/null
 out="$(hook UserPromptSubmit e2e-b)"
 echo "$out" | grep -q 'human checking in'
-pass "human message delivered"
+echo "$out" | grep -q 'human user'
+pass "human message delivered and framed as human"
 "$BIN" reply --session sid:e2e-b --to user "ack: human message received" >/dev/null
 out="$("$BIN" log -n 8)"
 grep -q "$nameB→user: ack: human message received" <<<"$out"

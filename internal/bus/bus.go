@@ -118,6 +118,8 @@ type State struct {
 	Seq      int64            `json:"seq"`
 	Sessions []*Session       `json:"sessions"`
 	Inboxes  map[string][]Msg `json:"inboxes"`
+	Mine     map[string][]Msg `json:"mine,omitempty"`
+	Recent   []Msg            `json:"recent,omitempty"`
 	Tomb     map[string]int64 `json:"tomb"`
 }
 
@@ -437,23 +439,43 @@ func (b *Bus) LastPeer(id, peer string) (Msg, bool) {
 	if s == nil {
 		return Msg{}, false
 	}
-	q := b.mine[s.Name]
-	for i := len(q) - 1; i >= 0; i-- {
-		m := q[i]
-		if m.From == "" {
-			continue
+	name := s.Name
+	// A reply target can come from three places: already-delivered mail
+	// (mine), mail the agent only peeked at (still in the inbox), or the
+	// persisted global history after a daemon restart (recent). The newest
+	// addressable non-self message wins.
+	var best Msg
+	var found bool
+	bestTs := int64(-1)
+	consider := func(m Msg) {
+		if m.From == "" || m.From == name {
+			return
+		}
+		if m.To != name && m.To != "all" {
+			return
 		}
 		if peer != "" && strings.ToLower(m.From) != peer {
-			continue
+			return
 		}
-		// "user" is the addressable human side; other senders must still be
-		// live for a reply to reach them.
+		// "user"/"user-web" are the addressable human side; other senders
+		// must still be live for a reply to reach them.
 		if m.From != "user" && m.From != "user-web" && b.byName[m.From] == nil {
-			continue
+			return
 		}
-		return m, true
+		if m.Ts >= bestTs {
+			best, bestTs, found = m, m.Ts, true
+		}
 	}
-	return Msg{}, false
+	for _, m := range b.recent {
+		consider(m)
+	}
+	for _, m := range b.mine[name] {
+		consider(m)
+	}
+	for _, m := range b.inbox[name] {
+		consider(m)
+	}
+	return best, found
 }
 
 // Log returns the tail of the global message history (all deliveries).
@@ -637,6 +659,11 @@ func (b *Bus) Snapshot() *State {
 	for n, q := range b.inbox {
 		st.Inboxes[n] = append([]Msg(nil), q...)
 	}
+	st.Mine = map[string][]Msg{}
+	for n, q := range b.mine {
+		st.Mine[n] = append([]Msg(nil), q...)
+	}
+	st.Recent = append([]Msg(nil), b.recent...)
 	for n, e := range b.tomb {
 		st.Tomb[n] = e
 	}
@@ -654,7 +681,11 @@ func (b *Bus) Restore(st *State) {
 	b.tomb = map[string]int64{}
 	b.rates = map[string][]int64{}
 	b.dup = map[string]dupEntry{}
-	b.recent = nil
+	b.recent = append([]Msg(nil), st.Recent...)
+	b.mine = map[string][]Msg{}
+	for n, q := range st.Mine {
+		b.mine[n] = append([]Msg(nil), q...)
+	}
 	b.seq = st.Seq
 	for _, s := range st.Sessions {
 		cp := *s
