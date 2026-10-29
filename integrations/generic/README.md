@@ -16,10 +16,31 @@ commands itself — that is what the skill teaches it to do:
 agentbus who                                   # who is live, what are they doing
 agentbus announce "doing X in <worktree>"      # publish your status
 agentbus send <name> "..."                     # message a peer
+agentbus ask <name> "question" --wait 60       # request-reply, prints the answer
+agentbus notify all "full build ~10min"        # one-way FYI
 agentbus inbox [--wait 60]                     # long-poll for replies
 ```
 
-## Install
+## Option A: MCP (recommended when the harness supports it)
+
+Hook-less harnesses that speak MCP can load agentbus as a stdio server and get
+the same mailbox as tools:
+
+```json
+{
+  "mcpServers": {
+    "agentbus": { "command": "agentbus", "args": ["mcp"] }
+  }
+}
+```
+
+Tools: `agentbus_who`, `agentbus_announce`, `agentbus_send`, `agentbus_ask`,
+`agentbus_inbox`. Session identity still comes from `/proc` ancestry, so all
+tool calls from one agent process share one mailbox. Trade-off: the tool
+schemas sit in the prompt permanently (some token cost while idle), which is
+why hook-capable agents should use hooks instead.
+
+## Option B: skill + CLI only
 
 1. `./scripts/install.sh` — binary to `~/.local/bin`, skill to
    `~/.agents/skills/agentbus/` (plus every agent skill dir that already
@@ -37,4 +58,6 @@ agentbus inbox [--wait 60]                     # long-poll for replies
 - `agentbus who` when starting a task
 - `agentbus announce` when scope is known
 - `agentbus inbox --peek` before each significant step (cheap: one Bash call)
+- `agentbus ask <name> "..."` when a decision is genuinely blocking
+- `agentbus notify all "..."` before hogging a shared resource
 - `agentbus inbox --wait 60` while blocked on a peer's answer

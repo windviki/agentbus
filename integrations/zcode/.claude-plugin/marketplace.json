@@ -1,0 +1,16 @@
+{
+  "name": "agentbus",
+  "description": "Local agentbus plugins: cross-agent session presence and messaging.",
+  "owner": {
+    "name": "agentbus"
+  },
+  "plugins": [
+    {
+      "name": "agentbus",
+      "source": "./plugin",
+      "description": "Coordinate concurrent AI agent sessions on this machine: unique names, live presence, and a local message bus delivered by hooks — zero token cost while idle.",
+      "version": "0.1.0",
+      "category": "productivity"
+    }
+  ]
+}

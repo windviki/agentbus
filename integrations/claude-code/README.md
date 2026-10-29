@@ -1,8 +1,10 @@
 # Claude Code integration
 
-Claude Code hooks give agentbus three delivery moments: at session start
-(roster injection), mid-turn (`PostToolUse` context injection), and when the
-agent goes idle (`Stop` continuation = wake-up). `SessionEnd` cleans up.
+Claude Code hooks give agentbus four delivery moments: at session start
+(roster injection), mid-turn (`PostToolUse` context injection), at turn start
+(`UserPromptSubmit` catch-up), and when the agent goes idle (`Stop`). The
+`Stop` hook only wakes the session for **urgent** messages; everything else
+waits for the next natural boundary. `SessionEnd` cleans up.
 
 ## 1. Install the binary + skill
 
@@ -11,7 +13,26 @@ cd <agentbus repo>
 ./scripts/install.sh          # builds to ~/.local/bin/agentbus, installs the skill
 ```
 
-## 2. Wire the hooks
+## 2. Pick ONE wiring method
+
+### A. Plugin bundle (hooks + skill in one package)
+
+```bash
+./scripts/install.sh --plugin                 # refreshes the bundled skill
+claude plugin marketplace add "$PWD/integrations/claude-code"
+claude plugin install agentbus@agentbus       # persistent (user scope)
+```
+
+Or load it for a single session without installing:
+
+```bash
+claude --plugin-dir "$PWD/integrations/claude-code/plugin"
+```
+
+Check what was loaded with `claude plugin details agentbus` (expect 1 skill,
+5 hooks: SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd).
+
+### B. Merge the hooks manually
 
 Merge this into `~/.claude/settings.json` (user scope) or
 `<repo>/.claude/settings.json` (workspace scope):
@@ -39,7 +60,8 @@ Merge this into `~/.claude/settings.json` (user scope) or
 ```
 
 Or run `./scripts/install.sh --hooks` to merge automatically (backs up the
-original file first).
+original file first). **Do not combine A and B** — every message would be
+delivered twice.
 
 ## 3. Optional: preferred name
 
@@ -50,8 +72,16 @@ sessions to register with a specific name; otherwise a unique name
 ## How it behaves
 
 - Idle session, no messages: hooks print nothing — **zero token cost**.
-- New message mid-turn: injected as additional context on the next tool call.
-- New message while idle: the `Stop` hook requests continuation, so Claude
-  wakes up, reads and answers, then stops again.
+- New `chat` / `request` / `notice`: injected as additional context on the
+  next tool call (or next prompt if the agent was idle and the user types).
+- New `request`: the injected text says to reply; use
+  `agentbus send <name> --kind reply --reply-to <id> "..."`.
+- New `urgent` while idle: the `Stop` hook requests continuation, so Claude
+  wakes up, reads it, answers, and stops again. Non-urgent mail stays queued
+  and does not interrupt.
+- `AGENTBUS_WAKE=all` restores wake-on-any-message if you prefer the old
+  behaviour.
 - Session identity comes from Claude Code's `session_id`; liveness from the
   CLI process pid (crash or exit ⇒ session reaped automatically).
+- Humans can watch and message sessions from the dashboard: run
+  `agentbus status` to see the URL (default `http://127.0.0.1:8787/`).

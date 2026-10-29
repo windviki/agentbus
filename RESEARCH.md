@@ -33,6 +33,8 @@
   基于 HTTP + JSON-RPC，Agent Card、任务、artifact、SSE 流。定位是**跨组织、
   跨网络的常驻服务 agent** 互操作。要为两个本地终端会话跑 HTTP server +
   JSON-RPC 生命周期，完全不成比例；且各 CLI 也不会内嵌 A2A server。
+  （v1 只补了 loopback 上的 A2A 子集——Agent Card + `message/send`——让外部
+  客户端能接入同一份总线；任务/artifact/SSE 不做，见 DESIGN.md §6。）
 
 ### C. 同方向但极早期的项目（≤2 星）
 
@@ -61,7 +63,9 @@ unix-socket daemon（来自 amp-skill），补上我们独有的部分：
 
 - 跨 CLI 的身份协议（session_id → 唯一名，`/proc` 祖先探测兜底）；
 - 存在感 + 状态公告（"bob 正在 XXX"）；
-- 四个投递时机（SessionStart 名册 / PostToolUse 工作中 / UserPromptSubmit 回合开始 / Stop 空闲唤醒）；
+- 四个投递时机（SessionStart 名册 / PostToolUse 工作中 / UserPromptSubmit 回合开始 / Stop 仅 urgent 唤醒）；
 - PID 级 liveness 与墓碑式名字回收；
 - 限速 + 去重防 agent 对话风暴；
-- daemon 自动拉起与原子状态持久化。
+- daemon 自动拉起与原子状态持久化；
+- 可选的本地边界：Web 看板、A2A 子集、stdio MCP facade——都只是同一份
+  总线状态的视图，不改变"hook 为底座"的结论。

@@ -1,16 +1,33 @@
 #!/usr/bin/env bash
 # agentbus installer: builds the binary, installs the cross-agent skill, and
-# (with --hooks) merges hook config into Claude Code / ZCode settings.
+# optionally wires hooks (--hooks) or prints plugin-bundle paths (--plugin).
 #
 # Usage:
-#   ./scripts/install.sh            # binary + skill
-#   ./scripts/install.sh --hooks    # additionally wire hooks (backs up settings)
+#   ./scripts/install.sh              # binary + skill
+#   ./scripts/install.sh --hooks      # additionally wire hooks (backs up settings)
+#   ./scripts/install.sh --plugin     # refresh + show the installable plugin bundles
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN_DEST="${AGENTBUS_BIN:-$HOME/.local/bin}"
 HOOKS=0
-[ "${1:-}" = "--hooks" ] && HOOKS=1
+PLUGIN=0
+for arg in "$@"; do
+  case "$arg" in
+    --hooks)  HOOKS=1 ;;
+    --plugin) PLUGIN=1 ;;
+    -h|--help)
+      sed -n '5,8p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    *)
+      echo "unknown option: $arg (expected --hooks or --plugin)" >&2
+      exit 2 ;;
+  esac
+done
+if [ "$HOOKS" = "1" ] && [ "$PLUGIN" = "1" ]; then
+  echo "--hooks and --plugin wire the same hooks; pick one to avoid double delivery" >&2
+  exit 2
+fi
 
 echo "== building agentbus"
 mkdir -p "$BIN_DEST"
@@ -31,6 +48,26 @@ install_skill "$HOME/.agents/skills/agentbus" always      # shared across agents
 install_skill "$HOME/.claude/skills/agentbus"             # claude code, if present
 install_skill "$HOME/.zcode/skills/agentbus"              # zcode, if present
 install_skill "$HOME/.kimi/skills/agentbus"               # kimi, if present
+
+if [ "$PLUGIN" = "1" ]; then
+  echo "== plugin bundles (hooks + skill in one package)"
+  # Keep the bundled skill copies identical to the canonical one.
+  for d in "$ROOT/integrations/claude-code/plugin" "$ROOT/integrations/zcode/plugin"; do
+    mkdir -p "$d/skills/agentbus"
+    cp "$ROOT/skills/agentbus/SKILL.md" "$d/skills/agentbus/SKILL.md"
+  done
+  cat <<EOF
+   claude code: add the local marketplace once, then install the plugin:
+                  claude plugin marketplace add "$ROOT/integrations/claude-code"
+                  claude plugin install agentbus@agentbus
+                or load it for one session only:
+                  claude --plugin-dir "$ROOT/integrations/claude-code/plugin"
+   zcode:       Settings → Plugin Management → add the local marketplace
+                "$ROOT/integrations/zcode", then install "agentbus"
+                (plugin hooks need no hooks.enabled flag; they register themselves)
+   The bundle carries the same hooks as --hooks plus the skill — use one or the other.
+EOF
+fi
 
 if [ "$HOOKS" = "1" ]; then
   echo "== wiring hooks"

@@ -1,0 +1,9 @@
+{
+  "name": "agentbus",
+  "version": "0.1.0",
+  "description": "Coordinate concurrent AI agent sessions on this machine: unique names, live presence, and a local message bus delivered by hooks — zero token cost while idle.",
+  "author": {
+    "name": "agentbus"
+  },
+  "license": "MIT"
+}

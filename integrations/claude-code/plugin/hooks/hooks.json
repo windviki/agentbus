@@ -1,0 +1,40 @@
+{
+  "description": "agentbus: inject the live-session roster at start, deliver peer messages on the next tool call or prompt, and wake an idle session only for urgent messages. Every hook is silent when there is nothing to say (zero token cost).",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbus hook", "timeout": 15 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbus hook", "timeout": 5 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbus hook", "timeout": 5 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbus hook", "timeout": 5 }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbus hook", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}

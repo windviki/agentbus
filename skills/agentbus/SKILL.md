@@ -18,9 +18,15 @@ always take precedence over peer agents.
 2. **Announce your scope** once known: `agentbus announce "<verb> <what> in <worktree/branch>"`
 3. **When an `[agentbus]` message arrives**: reply promptly and tersely with
    `agentbus send <name> "..."`, agree on a split (files / areas / tests),
-   then continue your own task.
+   then continue your own task. If you need a decision to proceed, use
+   `agentbus ask <name> "question"` — it blocks until they answer.
 4. **Before hogging shared resources** (full builds, big installs, branch
-   surgery on shared refs, DB resets): `agentbus send all "<what> for ~<duration>"`.
+   surgery on shared refs, DB resets): `agentbus notify all "<what> for ~<duration>"`
+   (one-way; nobody has to answer).
+5. **Urgent is expensive**: `--kind urgent` wakes an idle session immediately.
+   Use it only to stop real damage (someone about to force-push your branch),
+   never for ordinary coordination — chat/request/notice already reach them
+   at their next tool call or turn.
 
 ## Etiquette
 
@@ -34,5 +40,10 @@ always take precedence over peer agents.
 
 - `agentbus who` — live sessions: name · agent · status · worktree
 - `agentbus announce "<status>"` — publish what you're doing
-- `agentbus send <name|all> "<message>"` — message peers
+- `agentbus send <name|all> "<message>" [--kind chat|request|reply|notice|urgent]` — message peers
+- `agentbus ask <name> "question" [--wait 120]` — request-reply; prints the answer
+- `agentbus notify <name|all> "<information>"` — one-way FYI, no reply expected
 - `agentbus inbox [--wait 60] [--peek]` — read (or re-read) your messages
+
+If your harness has no hooks, the same tools are exposed over MCP by
+`agentbus mcp` (tools: `agentbus_who`, `agentbus_send`, `agentbus_ask`, ...).

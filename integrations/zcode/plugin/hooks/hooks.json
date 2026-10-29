@@ -1,0 +1,34 @@
+{
+  "description": "agentbus: inject the live-session roster at start, deliver peer messages on the next tool call or prompt, and wake an idle session only for urgent messages. Every hook is silent when there is nothing to say (zero token cost). ZCode has no SessionEnd hook; liveness falls back to PID reaping.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbus hook", "timeoutMs": 15000 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbus hook", "timeoutMs": 5000 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbus hook", "timeoutMs": 5000 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbus hook", "timeoutMs": 5000 }
+        ]
+      }
+    ]
+  }
+}
+
