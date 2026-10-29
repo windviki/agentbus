@@ -33,14 +33,46 @@ const (
 	pollTick   = 50 * time.Millisecond
 )
 
-// Msg is one message on the bus.
+// Msg is one message on the bus. The JSON field names follow the A2A message
+// envelope where sensible (messageId, replyTo, kind) so the HTTP/A2A boundary
+// can map losslessly.
 type Msg struct {
-	ID   string `json:"id"`
-	From string `json:"from"`
-	To   string `json:"to"`
-	Type string `json:"type,omitempty"`
-	Body string `json:"body"`
-	Ts   int64  `json:"ts"`
+	ID      string `json:"messageId"`
+	ReplyTo string `json:"replyTo,omitempty"`
+	From    string `json:"from"`
+	To      string `json:"to"` // session name or "all"
+	Kind    string `json:"kind,omitempty"`
+	Body    string `json:"body"`
+	Ts      int64  `json:"ts"`
+}
+
+// Message kinds — they drive delivery behaviour (see DESIGN.md "delivery
+// ladder"): only Urgent may wake an idle session via the Stop hook; the rest
+// are injected at the next natural boundary (next tool call / next prompt).
+const (
+	KindChat    = "chat"    // default conversation message
+	KindRequest = "request" // expects an answer (agentbus ask)
+	KindReply   = "reply"   // answer to a request (carries ReplyTo)
+	KindNotice  = "notice"  // one-way FYI, no reply expected
+	KindUrgent  = "urgent"  // may wake an idle session (human interrupt)
+)
+
+func ValidKind(k string) bool {
+	switch k {
+	case KindChat, KindRequest, KindReply, KindNotice, KindUrgent:
+		return true
+	}
+	return false
+}
+
+// HasUrgent reports whether any message in the list is urgent.
+func HasUrgent(msgs []Msg) bool {
+	for _, m := range msgs {
+		if m.Kind == KindUrgent {
+			return true
+		}
+	}
+	return false
 }
 
 // Session is one agent session on the bus. ID is a stable client-side key
@@ -207,9 +239,11 @@ func (b *Bus) Announce(id, status string) (*Session, error) {
 }
 
 // Send routes one message. to = "all" broadcasts to every live session except
-// the sender. Returns the message, recipient count, and whether it was
-// dropped as a duplicate of a recent identical send.
-func (b *Bus) Send(from, to, body, typ string) (Msg, int, bool, error) {
+// the sender. kind selects the delivery class (chat/request/reply/notice/
+// urgent); replyTo correlates a reply with the message it answers. Returns
+// the message, recipient count, and whether it was dropped as a duplicate of
+// a recent identical send.
+func (b *Bus) Send(from, to, body, kind, replyTo string) (Msg, int, bool, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.reapLocked()
@@ -222,8 +256,12 @@ func (b *Bus) Send(from, to, body, typ string) (Msg, int, bool, error) {
 	if from == "" {
 		return Msg{}, 0, false, fmt.Errorf("%w: empty sender", ErrBadInput)
 	}
-	if typ == "" {
-		typ = "chat"
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if kind == "" {
+		kind = KindChat
+	}
+	if !ValidKind(kind) {
+		return Msg{}, 0, false, fmt.Errorf("%w: kind must be chat|request|reply|notice|urgent", ErrBadInput)
 	}
 	now := b.now()
 	if !b.allowRateLocked(from, now) {
@@ -235,7 +273,7 @@ func (b *Bus) Send(from, to, body, typ string) (Msg, int, bool, error) {
 	if broadcast {
 		dest = "all"
 	}
-	m := Msg{ID: b.nextIDLocked(), From: from, To: dest, Type: typ, Body: body, Ts: now}
+	m := Msg{ID: b.nextIDLocked(), ReplyTo: replyTo, From: from, To: dest, Kind: kind, Body: body, Ts: now}
 
 	key := from + "\x00" + dest + "\x00" + body
 	if d, ok := b.dup[key]; ok && now-d.ts < dupWindowS {
@@ -303,6 +341,39 @@ func (b *Bus) Poll(id string, ack bool, wait time.Duration) ([]Msg, string, erro
 		rem := deadline.Sub(b.opt.Now())
 		if rem <= 0 {
 			return nil, name, nil
+		}
+		time.Sleep(min(pollTick, rem))
+	}
+}
+
+// TakeFrom waits for and removes the first message sent by peer (direct or
+// broadcast) from the calling session's inbox — the reply half of `ask`.
+// Other messages stay queued for normal hook delivery.
+func (b *Bus) TakeFrom(id, peer string, wait time.Duration) (Msg, bool, string) {
+	peer = strings.ToLower(strings.TrimSpace(peer))
+	deadline := b.opt.Now().Add(wait)
+	for {
+		b.mu.Lock()
+		b.reapLocked()
+		s := b.sess[id]
+		if s == nil {
+			b.mu.Unlock()
+			return Msg{}, false, ""
+		}
+		name := s.Name
+		s.LastSeen = b.now()
+		q := b.inbox[name]
+		for i, m := range q {
+			if m.From == peer && (m.To == name || m.To == "all") {
+				b.inbox[name] = append(q[:i:i], q[i+1:]...)
+				b.mu.Unlock()
+				return m, true, name
+			}
+		}
+		b.mu.Unlock()
+		rem := deadline.Sub(b.opt.Now())
+		if rem <= 0 {
+			return Msg{}, false, name
 		}
 		time.Sleep(min(pollTick, rem))
 	}

@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agentbus</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b23; --panel2: #1c232e; --line: #26303d;
+    --fg: #dce3ec; --dim: #8a97a8; --acc: #4da3ff; --urgent: #ff5d5d;
+    --req: #ffb454; --notice: #7fd18a; --reply: #b18cff; --chat: #6b7887;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+           padding: 14px 20px; border-bottom: 1px solid var(--line);
+           background: var(--panel); position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 17px; margin: 0; letter-spacing: .5px; }
+  header h1 .bus { color: var(--acc); }
+  .meta { color: var(--dim); font-size: 12px; }
+  .meta b { color: var(--fg); font-weight: 600; }
+  #identity { margin-left: auto; display: flex; gap: 6px; align-items: center;
+              color: var(--dim); font-size: 12px; }
+  #identity input { width: 110px; background: var(--panel2); color: var(--fg);
+                    border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+  main { display: grid; grid-template-columns: 340px 1fr; gap: 14px;
+         padding: 14px 20px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--panel); border: 1px solid var(--line);
+            border-radius: 10px; overflow: hidden; }
+  section > h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+                 color: var(--dim); margin: 0; padding: 10px 14px;
+                 border-bottom: 1px solid var(--line); }
+  .agent { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .agent:last-child { border-bottom: none; }
+  .agent .top { display: flex; align-items: center; gap: 8px; }
+  .agent .name { font-weight: 700; color: var(--acc); cursor: pointer; }
+  .agent .agentlabel { color: var(--dim); font-size: 11px; border: 1px solid var(--line);
+                       padding: 1px 6px; border-radius: 999px; }
+  .agent .seen { margin-left: auto; color: var(--dim); font-size: 11px; }
+  .agent .status { color: var(--fg); margin: 4px 0 2px; font-size: 13px; }
+  .agent .where { color: var(--dim); font-size: 11px; word-break: break-all; }
+  .agent .actions { margin-top: 6px; display: flex; gap: 6px; }
+  .agent .actions button { background: var(--panel2); color: var(--fg);
+      border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px;
+      font: inherit; font-size: 12px; cursor: pointer; }
+  .agent .actions button:hover { border-color: var(--acc); color: var(--acc); }
+  .agent .actions button.warn:hover { border-color: var(--urgent); color: var(--urgent); }
+  #feed { max-height: 72vh; overflow-y: auto; }
+  .msg { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .msg .line1 { display: flex; gap: 8px; align-items: baseline; font-size: 12px;
+                color: var(--dim); flex-wrap: wrap; }
+  .msg .from { color: var(--acc); cursor: pointer; font-weight: 600; }
+  .msg .to { color: var(--dim); }
+  .badge { font-size: 10px; padding: 1px 7px; border-radius: 999px;
+           border: 1px solid currentColor; text-transform: uppercase; letter-spacing: .5px; }
+  .badge.chat { color: var(--chat); } .badge.request { color: var(--req); }
+  .badge.reply { color: var(--reply); } .badge.notice { color: var(--notice); }
+  .badge.urgent { color: var(--urgent); font-weight: 700; }
+  .msg .time { margin-left: auto; }
+  .msg .body { margin-top: 3px; white-space: pre-wrap; word-break: break-word; }
+  .msg .re { color: var(--reply); font-size: 11px; }
+  .empty { color: var(--dim); padding: 20px; text-align: center; }
+  #composer { position: sticky; bottom: 0; background: var(--panel2);
+              border-top: 1px solid var(--line); padding: 10px 14px; display:
+              grid; grid-template-columns: 140px 110px 1fr auto; gap: 8px; }
+  #composer select, #composer textarea, #composer button {
+      background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+      border-radius: 6px; padding: 6px 8px; font: inherit; }
+  #composer textarea { resize: vertical; min-height: 38px; max-height: 140px; }
+  #composer button { background: var(--acc); color: #08121f; font-weight: 700;
+                     border: none; padding: 6px 16px; cursor: pointer; }
+  #composer button:disabled { opacity: .5; cursor: wait; }
+  #note { padding: 6px 14px; color: var(--dim); font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="bus">⌘</span> agentbus</h1>
+  <span class="meta">up <b id="uptime">–</b> · <b id="nsess">0</b> session(s) · <b id="nmsg">0</b> msg</span>
+  <span class="meta" id="proxhint"></span>
+  <label id="identity">身份
+    <input id="ident" value="user-web" spellcheck="false">
+  </label>
+</header>
+<main>
+  <section>
+    <h2>Live sessions</h2>
+    <div id="roster"><div class="empty">…</div></div>
+  </section>
+  <section>
+    <h2>Conversation</h2>
+    <div id="feed"><div class="empty">…</div></div>
+    <div id="composer">
+      <select id="target"><option value="all">▷ broadcast (all)</option></select>
+      <select id="kind">
+        <option value="chat">chat</option>
+        <option value="request">request</option>
+        <option value="reply">reply</option>
+        <option value="notice">notice</option>
+        <option value="urgent">urgent</option>
+      </select>
+      <textarea id="body" placeholder="给 agent 发消息（urgent 会立即唤醒空闲会话）…" rows="1"></textarea>
+      <button id="send">send</button>
+    </div>
+    <div id="note"></div>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; };
+const ago = (ts, now) => {
+  const s = Math.max(0, now - ts);
+  if (s < 60) return "<1m"; if (s < 3600) return Math.floor(s/60) + "m";
+  if (s < 86400) return Math.floor(s/3600) + "h"; return Math.floor(s/86400) + "d";
+};
+const fmtUptime = (s) => s < 60 ? s + "s" : s < 3600 ? Math.floor(s/60) + "m" :
+  s < 86400 ? Math.floor(s/3600) + "h" + Math.floor(s%3600/60) + "m" : Math.floor(s/86400) + "d";
+const hhmm = (ts) => new Date(ts * 1000).toTimeString().slice(0, 5);
+
+// Optional bearer token: pass ?token=xxx once (kept for the session).
+let token = null;
+try {
+  token = new URLSearchParams(location.search).get("token") || sessionStorage.getItem("ab-token");
+  if (token) sessionStorage.setItem("ab-token", token);
+} catch (e) {}
+const headers = { "Content-Type": "application/json" };
+if (token) headers["X-Agentbus-Token"] = token;
+
+async function api(path, opts) {
+  const r = await fetch("./api/" + path, Object.assign({ headers }, opts));
+  if (r.status === 401) { $("note").textContent = "unauthorized: append ?token=<AGENTBUS_WEB_TOKEN> to the URL"; throw new Error("unauth"); }
+  return r.json();
+}
+
+let state = { sessions: [], messages: [], now: 0, uptime: 0 };
+let selected = "all";
+
+function renderRoster() {
+  const el = $("roster");
+  if (!state.sessions.length) { el.innerHTML = '<div class="empty">no live agent sessions</div>'; return; }
+  el.innerHTML = state.sessions.map(s => `
+    <div class="agent">
+      <div class="top">
+        <span class="name" data-to="${esc(s.name)}">${esc(s.name)}</span>
+        <span class="agentlabel">${esc(s.agent || "?")}</span>
+        <span class="seen">${esc(ago(s.last_seen, state.now))} ago</span>
+      </div>
+      <div class="status">${esc(s.status || "")}</div>
+      <div class="where">${esc(s.cwd || "")}${s.branch && s.branch !== "HEAD" ? "@" + esc(s.branch) : ""}${s.pid ? " · pid " + s.pid : ""}</div>
+      <div class="actions">
+        <button data-msg="${esc(s.name)}">message</button>
+        <button class="warn" data-urgent="${esc(s.name)}">⚠ interrupt</button>
+      </div>
+    </div>`).join("");
+  el.querySelectorAll("[data-msg]").forEach(b => b.onclick = () => compose(b.dataset.msg, "chat"));
+  el.querySelectorAll("[data-urgent]").forEach(b => b.onclick = () => compose(b.dataset.urgent, "urgent"));
+  el.querySelectorAll("[data-to]").forEach(n => n.onclick = () => compose(n.dataset.to, "chat"));
+  const t = $("target");
+  const names = state.sessions.map(s => s.name);
+  t.innerHTML = '<option value="all">▷ broadcast (all)</option>' +
+    names.map(n => `<option${n === selected ? " selected" : ""}>${esc(n)}</option>`).join("");
+}
+
+function renderFeed() {
+  const el = $("feed");
+  if (!state.messages.length) { el.innerHTML = '<div class="empty">no messages yet</div>'; return; }
+  el.innerHTML = state.messages.map(m => `
+    <div class="msg">
+      <div class="line1">
+        <span class="from" data-to="${esc(m.from)}">${esc(m.from)}</span>
+        <span class="to">→ ${esc(m.to)}</span>
+        <span class="badge ${esc(m.kind || "chat")}">${esc(m.kind || "chat")}</span>
+        ${m.replyTo ? `<span class="re">↩ ${esc(m.replyTo)}</span>` : ""}
+        <span class="time">${hhmm(m.ts)}</span>
+      </div>
+      <div class="body">${esc(m.body)}</div>
+    </div>`).join("");
+  el.querySelectorAll("[data-to]").forEach(n => n.onclick = () => compose(n.dataset.to, "chat"));
+}
+
+function compose(to, kind) {
+  selected = to; $("target").value = to; $("kind").value = kind || "chat";
+  $("body").focus();
+}
+
+async function refresh() {
+  try { state = await api("state"); } catch (e) { return; }
+  $("uptime").textContent = fmtUptime(state.uptime || 0);
+  $("nsess").textContent = state.sessions.length;
+  $("nmsg").textContent = state.messages.length;
+  renderRoster(); renderFeed();
+}
+
+async function send() {
+  const body = $("body").value.trim();
+  if (!body) return;
+  $("send").disabled = true;
+  try {
+    const r = await api("send", { method: "POST", body: JSON.stringify({
+      to: $("target").value, kind: $("kind").value, body, from: $("ident").value }) });
+    $("note").textContent = r.ok
+      ? (r.dup ? "suppressed (duplicate)" : "delivered to " + (r.recipients > 1 ? r.recipients + " sessions" : $("target").value))
+      : "error: " + r.error;
+    if (r.ok) $("body").value = "";
+  } catch (e) { $("note").textContent = "send failed"; }
+  $("send").disabled = false; refresh();
+}
+
+$("send").onclick = send;
+$("body").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
+});
+$("ident").addEventListener("change", () => $("ident").value = ($("ident").value.trim() || "user-web"));
+
+$("proxhint").textContent = location.pathname.includes("/proxy/")
+  ? "code-server proxy: " + location.pathname.split("/").slice(0, 3).join("/") + " → agentbus web"
+  : "";
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

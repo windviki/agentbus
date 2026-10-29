@@ -18,9 +18,11 @@ import (
 
 	"agentbus/internal/bus"
 	"agentbus/internal/client"
+	"agentbus/internal/mcp"
 	"agentbus/internal/procinfo"
 	"agentbus/internal/proto"
 	"agentbus/internal/server"
+	"agentbus/internal/web"
 )
 
 func main() { os.Exit(run(os.Args[1:])) }
@@ -48,6 +50,12 @@ func run(args []string) int {
 		return cmdAnnounce(rest)
 	case "send":
 		return cmdSend(rest)
+	case "ask":
+		return cmdAsk(rest)
+	case "notify":
+		return cmdNotify(rest)
+	case "mcp":
+		return cmdMcp(rest)
 	case "inbox":
 		return cmdInbox(rest)
 	case "leave":
@@ -80,18 +88,34 @@ Usage:
   agentbus who [-v|--json]                   # list live sessions + what they're doing
   agentbus announce "fixing auth in wt-auth" # publish your status
   agentbus send <name|all> "message"         # message a peer / broadcast
+                                             #   --kind chat|request|reply|notice|urgent
+  agentbus ask <name> "question" [--wait 120] # send a request and wait for the reply
+  agentbus notify <name|all> "information"   # one-way notice (no reply expected)
   agentbus inbox [--wait 60] [--peek]        # read your messages
   agentbus leave                             # leave the bus (automatic on exit anyway)
   agentbus log [-n 20]                       # recent bus traffic (all sessions)
+  agentbus mcp                               # run as a stdio MCP server (tools for
+                                             # harnesses without hooks: kimi/dsh/...)
   agentbus status | doctor                   # daemon state / installation checks
   agentbus serve [--detach] | stop           # daemon lifecycle (auto-spawns anyway)
+
+Communication patterns: send (direct or broadcast via "all"), ask (request-
+reply, blocks for the answer), notify (one-way), urgent kind (wakes an idle
+session via the Stop hook — the only kind allowed to interrupt).
 
 Session identity: taken from $AGENTBUS_SESSION_ID / $CLAUDE_SESSION_ID / the
 hook JSON session_id, or from the owning agent process. Pass --session <key>
 to override; humans without a session send as "user".
 
 Env: AGENTBUS_HOME (default ~/.agentbus), AGENTBUS_AGENT (force agent label),
-     AGENTBUS_NAME (preferred name for hook registration).
+     AGENTBUS_NAME (preferred name for hook registration),
+     AGENTBUS_WAKE (all = wake idle sessions on any message; default: urgent only),
+     AGENTBUS_WEB_PORT (dashboard port, default 8787), AGENTBUS_WEB=0 (disable),
+     AGENTBUS_WEB_TOKEN (require bearer token on the dashboard/A2A HTTP API).
+
+Web dashboard: http://127.0.0.1:8787/ — behind code-server use /proxy/8787/.
+A2A subset: GET /a2a/<name>/.well-known/agent-card.json, POST /a2a/<name>
+with JSON-RPC message/send (text parts).
 `)
 }
 
@@ -227,6 +251,10 @@ func cmdStatus(args []string) int {
 	}
 	fmt.Printf("[agentbus] daemon %s up %s · %d live session(s) · home %s\n",
 		resp.Version, dur(time.Duration(resp.Uptime)*time.Second), len(resp.Sessions), home)
+	if resp.WebAddr != "" {
+		fmt.Printf("[agentbus] web: http://%s/ (code-server: /proxy/%s/)\n",
+			resp.WebAddr, strings.TrimPrefix(resp.WebAddr, "127.0.0.1:"))
+	}
 	for _, s := range resp.Sessions {
 		fmt.Printf("  %s\n", rosterLine(s))
 	}
@@ -270,9 +298,24 @@ func cmdHook(args []string) int {
 			fmt.Print(hookContextJSON(h.EventName, incomingText(msgs)))
 		}
 	case "Stop":
-		if msgs := pollForHook(home, key); len(msgs) > 0 {
-			fmt.Print(stopBlockJSON(stopReason(msgs)))
+		// Delivery ladder: an idle session is only woken by urgent messages
+		// (AGENTBUS_WAKE=all restores wake-on-anything). Peek first so
+		// non-urgent messages stay queued for the next natural boundary
+		// (next prompt / next tool call) instead of being consumed here.
+		peek := false
+		resp, err := client.Call(home, true, proto.Request{Op: "poll", ID: key, Ack: &peek})
+		if err != nil || !resp.Ok || len(resp.Messages) == 0 {
+			return 0
 		}
+		if !bus.HasUrgent(resp.Messages) && os.Getenv("AGENTBUS_WAKE") != "all" {
+			return 0
+		}
+		take := true
+		resp, err = client.Call(home, true, proto.Request{Op: "poll", ID: key, Ack: &take})
+		if err != nil || !resp.Ok || len(resp.Messages) == 0 {
+			return 0
+		}
+		fmt.Print(stopBlockJSON(stopReason(resp.Messages)))
 	case "SessionEnd":
 		_, _ = client.Call(home, true, proto.Request{Op: "leave", ID: key})
 	}
@@ -424,15 +467,20 @@ func cmdSend(args []string) int {
 	fs := newFlagSet("send")
 	session := fs.String("session", "", "session key override")
 	from := fs.String("from", "", "sender name override (humans default to \"user\")")
-	typ := fs.String("type", "chat", "message type")
+	kind := fs.String("kind", "chat", "chat|request|reply|notice|urgent")
+	kindAlias := fs.String("type", "", "alias for --kind")
+	replyTo := fs.String("reply-to", "", "messageId this replies to")
 	if err := fs.Parse(args); err != nil {
 		return fail("bad flags: %v", err)
 	}
 	if fs.NArg() < 2 {
 		return fail("usage: agentbus send <name|all> \"message\"")
 	}
+	if *kindAlias != "" {
+		*kind = *kindAlias
+	}
 	to, body := fs.Arg(0), strings.Join(fs.Args()[1:], " ")
-	req := proto.Request{Op: "send", To: to, Body: body, Type: *typ}
+	req := proto.Request{Op: "send", To: to, Body: body, Kind: *kind, ReplyTo: *replyTo}
 	if key := sessionKey(*session); key != "" {
 		req.ID = key
 	} else if *from != "" {
@@ -452,6 +500,81 @@ func cmdSend(args []string) int {
 		fmt.Printf("[agentbus] broadcast delivered to %d session(s)\n", resp.Recipients)
 	default:
 		fmt.Printf("[agentbus] delivered to '%s'\n", strings.ToLower(to))
+	}
+	return 0
+}
+
+// cmdAsk: request-reply. Sends kind=request and blocks (long-poll) for the
+// peer's answer, which is printed and thereby consumed (no double delivery).
+func cmdAsk(args []string) int {
+	fs := newFlagSet("ask")
+	session := fs.String("session", "", "session key override")
+	waitS := fs.Int("wait", 120, "seconds to wait for the reply")
+	if err := fs.Parse(args); err != nil {
+		return fail("bad flags: %v", err)
+	}
+	if fs.NArg() < 2 {
+		return fail("usage: agentbus ask <name> \"question\"")
+	}
+	key := sessionKey(*session)
+	if key == "" {
+		return fail("no agent session detected; run inside an agent session or pass --session <key>")
+	}
+	to, body := fs.Arg(0), strings.Join(fs.Args()[1:], " ")
+	resp, err := client.Call(busHome(), true, proto.Request{
+		Op: "ask", ID: key, To: to, Body: body, WaitMs: *waitS * 1000,
+	})
+	if err != nil {
+		return fail("%v", err)
+	}
+	if !resp.Ok {
+		return fail("%s", resp.Error)
+	}
+	if len(resp.Messages) == 0 {
+		fmt.Printf("[agentbus] no reply from '%s' within %ds — proceed; check later with: agentbus inbox --peek\n",
+			strings.ToLower(to), *waitS)
+		return 1
+	}
+	m := resp.Messages[0]
+	fmt.Printf("[agentbus] reply from %s:\n%s\n", m.From, m.Body)
+	return 0
+}
+
+// cmdNotify: one-way notice (kind=notice) — delivered at the next natural
+// boundary, never wakes an idle session, no reply expected.
+func cmdNotify(args []string) int {
+	fs := newFlagSet("notify")
+	session := fs.String("session", "", "session key override")
+	from := fs.String("from", "", "sender name override")
+	if err := fs.Parse(args); err != nil {
+		return fail("bad flags: %v", err)
+	}
+	if fs.NArg() < 2 {
+		return fail("usage: agentbus notify <name|all> \"information\"")
+	}
+	to, body := fs.Arg(0), strings.Join(fs.Args()[1:], " ")
+	req := proto.Request{Op: "send", To: to, Body: body, Kind: "notice"}
+	if key := sessionKey(*session); key != "" {
+		req.ID = key
+	} else if *from != "" {
+		req.From = *from
+	}
+	resp, err := client.Call(busHome(), true, req)
+	if err != nil {
+		return fail("%v", err)
+	}
+	if !resp.Ok {
+		return fail("%s", resp.Error)
+	}
+	fmt.Printf("[agentbus] notice delivered (%d session(s))\n", resp.Recipients)
+	return 0
+}
+
+// cmdMcp runs agentbus as a stdio MCP server — the deep-integration path for
+// harnesses that support MCP tools but not hooks (kimi, dsh, ...).
+func cmdMcp(args []string) int {
+	if err := mcp.Run(); err != nil {
+		return fail("mcp: %v", err)
 	}
 	return 0
 }
@@ -578,6 +701,13 @@ func cmdDoctor(args []string) int {
 	}
 	if resp, err := client.Call(home, true, proto.Request{Op: "who"}); err == nil && resp.Ok {
 		note(true, "sessions: %d live", len(resp.Sessions))
+	}
+	if web.ServeHTTPCheck() {
+		fmt.Printf("[ok] web: http://%s/ (code-server: /proxy/%s/)\n", web.Addr(), strings.TrimPrefix(web.Addr(), "127.0.0.1:"))
+	} else if os.Getenv("AGENTBUS_WEB") == "0" {
+		fmt.Println("[--] web: disabled (AGENTBUS_WEB=0)")
+	} else {
+		fmt.Printf("[!!] web: not reachable on %s (port busy? see AGENTBUS_WEB_PORT)\n", web.Addr())
 	}
 
 	userHome, _ := os.UserHomeDir()

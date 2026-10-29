@@ -20,7 +20,8 @@ type Request struct {
 	To       string `json:"to,omitempty"`
 	From     string `json:"from,omitempty"`
 	Body     string `json:"body,omitempty"`
-	Type     string `json:"type,omitempty"`
+	Kind     string `json:"kind,omitempty"`
+	ReplyTo  string `json:"reply_to,omitempty"`
 	WaitMs   int    `json:"wait_ms,omitempty"`
 	Ack      *bool  `json:"ack,omitempty"`
 	N        int    `json:"n,omitempty"`
@@ -43,4 +44,5 @@ type Response struct {
 	Messages    []bus.Msg     `json:"messages,omitempty"`
 	Mine        []bus.Msg     `json:"mine,omitempty"`
 	Recent      []bus.Msg     `json:"recent,omitempty"`
+	WebAddr     string        `json:"web_addr,omitempty"`
 }

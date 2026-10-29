@@ -70,32 +70,50 @@ func incomingText(msgs []bus.Msg) string {
 	for _, m := range msgs {
 		fmt.Fprintf(&b, "[%s] %s\n", time.Unix(m.Ts, 0).Format("15:04"), msgCompact(m))
 	}
-	from := "the sender"
-	if len(msgs) > 0 && msgs[0].From != "" && msgs[0].From != "user" {
-		from = msgs[0].From
+	needsReply := false
+	from := "them"
+	for _, m := range msgs {
+		if m.Kind == bus.KindRequest || m.Kind == bus.KindUrgent {
+			needsReply = true
+		}
+		if m.From != "" && m.From != "user" {
+			from = m.From
+		}
 	}
-	fmt.Fprintf(&b, "[agentbus] reply promptly: agentbus send %s \"...\" · roster: agentbus who\n", from)
+	if needsReply {
+		fmt.Fprintf(&b, "[agentbus] reply promptly: agentbus send %s \"...\" · roster: agentbus who\n", from)
+	} else {
+		b.WriteString("[agentbus] no reply needed unless relevant · roster: agentbus who\n")
+	}
 	return b.String()
 }
 
 // stopReason is the Stop-hook continuation reason: the agent is woken with
-// this text when messages arrive while it was about to go idle.
+// this text when urgent messages arrive while it was about to go idle.
 func stopReason(msgs []bus.Msg) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "New agentbus message%s arrived for you:\n", plural(len(msgs)))
+	fmt.Fprintf(&b, "Urgent agentbus message%s arrived for you:\n", plural(len(msgs)))
 	for _, m := range msgs {
 		fmt.Fprintf(&b, "[%s] %s\n", time.Unix(m.Ts, 0).Format("15:04"), msgCompact(m))
 	}
-	b.WriteString("Handle it (reply via `agentbus send <name> \"...\"`), then continue or wrap up your task.\n")
+	b.WriteString("Handle it now (reply via `agentbus send <name> \"...\"`), then continue or wrap up your task.\n")
 	return b.String()
 }
 
 func msgCompact(m bus.Msg) string {
-	to := m.To
-	if to == "all" {
-		to = "all"
+	kind := m.Kind
+	if kind == "" {
+		kind = bus.KindChat
 	}
-	return fmt.Sprintf("%s→%s: %s", m.From, to, m.Body)
+	badge := ""
+	if kind != bus.KindChat {
+		badge = "[" + kind + "] "
+	}
+	re := ""
+	if m.ReplyTo != "" {
+		re = " (↩ " + m.ReplyTo + ")"
+	}
+	return fmt.Sprintf("%s%s→%s: %s%s", badge, m.From, m.To, m.Body, re)
 }
 
 func printRoster(sessions []bus.Session, verbose bool) {

@@ -17,6 +17,7 @@ import (
 	"agentbus/internal/bus"
 	"agentbus/internal/client"
 	"agentbus/internal/proto"
+	"agentbus/internal/web"
 )
 
 const Version = "0.1.0"
@@ -28,6 +29,7 @@ type Server struct {
 	statePath string
 	saveMu    sync.Mutex
 	saving    bool
+	webAddr   string
 }
 
 // Run serves in the foreground until SIGTERM/SIGINT or a shutdown op.
@@ -51,6 +53,9 @@ func Run(home string) error {
 	_ = os.Chmod(sock, 0o600)
 	pidFile := filepath.Join(home, "daemon.pid")
 	_ = os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600)
+
+	// Web dashboard + A2A boundary on loopback (disable: AGENTBUS_WEB=0).
+	s.webAddr = web.Start(s.b, Version, s.started)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
@@ -155,11 +160,32 @@ func (s *Server) dispatch(r *proto.Request) (proto.Response, bool) {
 				from = name
 			}
 		}
-		m, n, dup, err := s.b.Send(from, r.To, r.Body, r.Type)
+		m, n, dup, err := s.b.Send(from, r.To, r.Body, r.Kind, r.ReplyTo)
 		if err != nil {
 			return errResp(err), false
 		}
 		resp.MsgID, resp.Recipients, resp.Dup = m.ID, n, dup
+		s.save()
+	case "ask":
+		// request + wait-for-reply: send kind=request, then long-wait for the
+		// first message the peer sends back to us (taken from the inbox so it
+		// is not double-delivered by hooks).
+		if r.ID == "" {
+			return errResp(fmt.Errorf("ask requires a session identity")), false
+		}
+		name, ok := s.b.NameOf(r.ID)
+		if !ok {
+			return errResp(fmt.Errorf("unknown session %s", r.ID)), false
+		}
+		m, _, _, err := s.b.Send(name, r.To, r.Body, bus.KindRequest, "")
+		if err != nil {
+			return errResp(err), false
+		}
+		resp.MsgID = m.ID
+		reply, got, _ := s.b.TakeFrom(r.ID, m.To, time.Duration(r.WaitMs)*time.Millisecond)
+		if got {
+			resp.Messages = []bus.Msg{reply}
+		}
 		s.save()
 	case "poll":
 		ack := true
@@ -190,7 +216,7 @@ func (s *Server) dispatch(r *proto.Request) (proto.Response, bool) {
 	case "log":
 		resp.Recent = s.b.Log(r.N)
 	case "status":
-		resp.Version, resp.Home = Version, s.home
+		resp.Version, resp.Home, resp.WebAddr = Version, s.home, s.webAddr
 		resp.Uptime = int64(time.Since(s.started) / time.Second)
 		resp.Sessions = s.b.Who()
 	case "shutdown":

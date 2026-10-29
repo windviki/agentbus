@@ -104,7 +104,7 @@ func TestSendDirectPollAck(t *testing.T) {
 	b.Register("sid:a", "alice", "", "", "", 0, "")
 	b.Register("sid:b", "bob", "", "", "", 0, "")
 
-	if _, _, _, err := b.Send("alice", "bob", "you there?", ""); err != nil {
+	if _, _, _, err := b.Send("alice", "bob", "you there?", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	// peek keeps the message
@@ -137,7 +137,7 @@ func TestBroadcastExcludesSender(t *testing.T) {
 	b.Register("sid:a", "alice", "", "", "", 0, "")
 	b.Register("sid:b", "bob", "", "", "", 0, "")
 	b.Register("sid:c", "carol", "", "", "", 0, "")
-	_, n, _, err := b.Send("alice", "all", "rebuilding main", "")
+	_, n, _, err := b.Send("alice", "all", "rebuilding main", "", "")
 	if err != nil || n != 2 {
 		t.Fatalf("broadcast: %v recipients=%d", err, n)
 	}
@@ -156,7 +156,7 @@ func TestBroadcastExcludesSender(t *testing.T) {
 func TestSendUnknownSuggests(t *testing.T) {
 	b, _ := newTestBus()
 	b.Register("sid:a", "bob", "", "", "", 0, "")
-	_, _, _, err := b.Send("user", "bo", "hi", "")
+	_, _, _, err := b.Send("user", "bo", "hi", "", "")
 	if err == nil || !strings.Contains(err.Error(), "bob") {
 		t.Fatalf("expected suggestion containing bob, got %v", err)
 	}
@@ -167,19 +167,19 @@ func TestRateLimitAndDedupe(t *testing.T) {
 	b.Register("sid:a", "alice", "", "", "", 0, "")
 	b.Register("sid:b", "bob", "", "", "", 0, "")
 	for i := 0; i < 5; i++ {
-		if _, _, _, err := b.Send("alice", "bob", strings.Repeat("m", i+1), ""); err != nil {
+		if _, _, _, err := b.Send("alice", "bob", strings.Repeat("m", i+1), "", ""); err != nil {
 			t.Fatalf("send %d: %v", i, err)
 		}
 	}
-	if _, _, _, err := b.Send("alice", "bob", "sixth", ""); err == nil || !strings.Contains(err.Error(), "rate") {
+	if _, _, _, err := b.Send("alice", "bob", "sixth", "", ""); err == nil || !strings.Contains(err.Error(), "rate") {
 		t.Fatalf("expected rate limit, got %v", err)
 	}
 	// identical resend is deduped even under the limit
 	b2, _ := newTestBus()
 	b2.Register("x", "alice", "", "", "", 0, "")
 	b2.Register("y", "bob", "", "", "", 0, "")
-	m1, _, _, _ := b2.Send("alice", "bob", "same", "")
-	m2, _, dup2, _ := b2.Send("alice", "bob", "same", "")
+	m1, _, _, _ := b2.Send("alice", "bob", "same", "", "")
+	m2, _, dup2, _ := b2.Send("alice", "bob", "same", "", "")
 	if !dup2 || m1.ID != m2.ID {
 		t.Fatalf("dedupe failed: dup=%v %s vs %s", dup2, m1.ID, m2.ID)
 	}
@@ -195,7 +195,7 @@ func TestPollWaitsForMessage(t *testing.T) {
 	b.Register("sid:b", "bob", "", "", "", 0, "")
 	go func() {
 		time.Sleep(80 * time.Millisecond)
-		b.Send("alice", "bob", "late", "")
+		b.Send("alice", "bob", "late", "", "")
 	}()
 	start := time.Now()
 	msgs, _, err := b.Poll("sid:b", true, 3*time.Second)
@@ -251,8 +251,8 @@ func TestSnapshotRestore(t *testing.T) {
 	b, _ := newTestBus()
 	b.Register("sid:a", "alice", "zcode", "/w", "main", 0, "")
 	b.Register("sid:b", "bob", "claude-code", "/w2", "", 0, "")
-	b.Send("alice", "bob", "ping", "")
-	b.Send("alice", "all", "broadcast", "")
+	b.Send("alice", "bob", "ping", "", "")
+	b.Send("alice", "all", "broadcast", "", "")
 	st := b.Snapshot()
 
 	c2 := newFakeClock()
@@ -281,5 +281,60 @@ func TestNormName(t *testing.T) {
 		if got := NormName(in); got != want {
 			t.Errorf("NormName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestKinds(t *testing.T) {
+	b, _ := newTestBus()
+	b.Register("sid:a", "alice", "", "", "", 0, "")
+	b.Register("sid:b", "bob", "", "", "", 0, "")
+	if _, _, _, err := b.Send("alice", "bob", "bad", "yell", ""); err == nil {
+		t.Fatal("invalid kind should be rejected")
+	}
+	m, _, _, err := b.Send("alice", "bob", "heads up", KindNotice, "")
+	if err != nil || m.Kind != KindNotice {
+		t.Fatalf("notice: %v %v", err, m.Kind)
+	}
+	m, _, _, err = b.Send("alice", "bob", "stop now", KindUrgent, "")
+	if err != nil || !HasUrgent([]Msg{m}) {
+		t.Fatal("HasUrgent should detect urgent")
+	}
+	if HasUrgent([]Msg{{Kind: KindChat}}) {
+		t.Fatal("chat must not count as urgent")
+	}
+}
+
+func TestAskTakeFrom(t *testing.T) {
+	b, c := newTestBus()
+	b.Register("sid:a", "alice", "", "", "", 0, "")
+	b.Register("sid:b", "bob", "", "", "", 0, "")
+	// alice asks bob; a broadcast from carol must not be taken
+	b.Register("sid:c", "carol", "", "", "", 0, "")
+	req, _, _, err := b.Send("alice", "bob", "split files or tests?", KindRequest, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Send("carol", "all", "noise broadcast", KindNotice, "")
+
+	go func() {
+		time.Sleep(60 * time.Millisecond)
+		b.Send("bob", "alice", "you take files", KindReply, req.ID)
+	}()
+	m, got, name := b.TakeFrom("sid:a", "bob", 3*time.Second)
+	if !got || name != "alice" || m.From != "bob" || m.ReplyTo != req.ID {
+		t.Fatalf("TakeFrom: got=%v name=%q m=%+v", got, name, m)
+	}
+	// the broadcast noise stayed queued for alice
+	msgs, _, _ := b.Poll("sid:a", true, 0)
+	if len(msgs) != 1 || msgs[0].From != "carol" {
+		t.Fatalf("broadcast should remain queued, got %+v", msgs)
+	}
+	// timeout path (advance the fake clock so the deadline actually passes)
+	go func() {
+		time.Sleep(80 * time.Millisecond)
+		c.advance(2 * time.Second)
+	}()
+	if _, got, _ := b.TakeFrom("sid:a", "bob", 50*time.Millisecond); got {
+		t.Fatal("TakeFrom should time out with no reply pending")
 	}
 }
