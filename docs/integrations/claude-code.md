@@ -1,7 +1,7 @@
 # Claude Code integration
 
 Claude Code hooks give agentbus four delivery moments: at session start
-(roster injection + session contract), mid-turn (`PostToolUse` context
+(workspace-grouped roster + session contract), mid-turn (`PostToolUse` context
 injection), at turn start (`UserPromptSubmit` catch-up), and when the agent goes
 idle (`Stop`). The `Stop` hook only wakes the session for **urgent** messages;
 everything else waits for the next natural boundary. `SessionEnd` cleans up.

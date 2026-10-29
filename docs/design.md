@@ -131,6 +131,13 @@ message envelope 靠拢（`messageId` / `replyTo` / `kind`），HTTP 边界可�
 | `Stop` | 即将空闲 | **先 peek**：仅当队列含 urgent 才 `{"decision":"block","reason":…}` 唤醒并 flush 队列；否则保持静默，消息留到下一个自然边界 |
 | `SessionEnd` | 退出 | `leave`（ZCode 无此事件，靠 PID 回收） |
 
+工作区发现：SessionStart 名册不是一股脑的全局列表，而是按**同一 worktree**
+（相同目录或同一 git worktree 内的子目录）、**同一 repo 的其他 worktree**
+（`git rev-parse --git-common-dir` 相同）、**其他**三组呈现；`agentbus peers`
+可以随时查询这三组。这样新会话开局就能看到"谁和我改了同一批文件"，而不是从
+一堆无关会话里猜。Kimi 的 SessionStart stdout 不会被注入，因此它的首个
+UserPromptSubmit 会补一次同样的 workspace 名册（每会话只注入一次）。
+
 `AGENTBUS_WAKE=all` 恢复"任意消息都可唤醒"的旧行为。poll 即 ack（消息只投
 一次），ack 后保留最近 5 条供 `inbox --peek` 复读。注入文本保持紧凑
 （见 render.go），并显式标注来源与可回复动作：

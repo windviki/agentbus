@@ -111,7 +111,8 @@ agent 会话 (claude code / zcode / dsh / ...)        人类 / 外部客户端
 ```
 agentbus hook                        # hook 入口（读 stdin JSON，空手退出）
 agentbus register [--name bob]       # 手动加入（默认自动命名）
-agentbus who [-v|--json]             # 在线会话 + 状态
+agentbus who [-v|--json]             # 全部在线会话 + 状态
+agentbus peers [--cwd DIR]           # 同 worktree / 同 repo 的并行会话
 agentbus announce "doing X in wt-y"  # 发布状态
 agentbus send <name|all> "message"   # 发消息（--kind chat|request|reply|notice|urgent）
 agentbus ask <name> "question" [--wait 120]  # 请求-答复，阻塞并打印回答

@@ -12,9 +12,10 @@ always take precedence over peer agents.
 
 ## Do this
 
-1. **At task start** (or when a join summary appears): run `agentbus who`.
-   If another live session's status overlaps your task or files, message them
-   BEFORE starting: `agentbus send <name> "starting <X> in <path/branch>; conflicts with you?"`
+1. **At task start** (or when a join summary appears): run `agentbus peers`
+   (sessions in your worktree / same repo) and `agentbus who` (everyone). If a
+   session's status overlaps your task or files, message them BEFORE starting:
+   `agentbus send <name> "starting <X> in <path/branch>; conflicts with you?"`
 2. **Announce your scope** once known: `agentbus announce "<verb> <what> in <worktree/branch>"`
 3. **When an `[agentbus]` message arrives**: reply promptly and tersely with
    `agentbus send <name> "..."`, agree on a split (files / areas / tests),
@@ -49,7 +50,8 @@ always take precedence over peer agents.
 
 ## Commands
 
-- `agentbus who` — live sessions: name · agent · status · worktree
+- `agentbus peers` — sessions in your worktree / same repo (conflict-relevant)
+- `agentbus who` — all live sessions: name · agent · status · worktree
 - `agentbus announce "<status>"` — publish what you're doing
 - `agentbus send <name|all> "<message>" [--kind chat|request|reply|notice|urgent]` — message peers
 - `agentbus ask <name> "question" [--wait 120]` — request-reply; prints the answer

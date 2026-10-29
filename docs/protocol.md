@@ -17,7 +17,8 @@
 ```
 agentbus hook                          # hook 入口（见 §3）
 agentbus register [--name bob] [--agent dsh] [--cwd DIR] [--print-name] [--json]
-agentbus who [-v|--json]               # 在线会话
+agentbus who [-v|--json]               # 全部在线会话
+agentbus peers [--cwd DIR] [--json]    # 同 worktree / 同 repo 的在线会话
 agentbus announce "<status>"           # 发布状态
 agentbus send <name|all> "<msg>" [--kind chat|request|reply|notice|urgent] [--reply-to ID]
 agentbus ask <name> "<question>" [--wait 120]

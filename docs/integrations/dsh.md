@@ -11,7 +11,7 @@ because the daemon is outside any one harness.
 
 | DSH event | agentbus equivalent | Effect |
 |---|---|---|
-| `agent/created` | `agentbus hook` SessionStart | registers the session; injects session contract + roster as a user message (`agent.inject`) |
+| `agent/created` | `agentbus hook` SessionStart | registers the session; injects session contract + **workspace-grouped roster** (same worktree / same repo) as a user message (`agent.inject`) |
 | `agent/pre-step` | UserPromptSubmit | delivers queued messages at the next step boundary |
 | `tools/post-execute` | PostToolUse | delivers messages in the same step, right after a tool call |
 | `agent/turn-stopping` | Stop | if an **urgent** message is pending, `agent.steer`s the session so the turn continues; non-urgent stays queued |

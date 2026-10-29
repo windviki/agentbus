@@ -32,6 +32,7 @@ go test -race ./...      # 并发/竞态（可选，较慢）
 | build | 二进制可构建 |
 | daemon | 首次使用自动拉起，`status` 通告 web 地址 |
 | SessionStart | 注册、名字、名册包含对端状态、会话契约（primer） |
+| 工作区 | `peers` 按 worktree/repo 分组；Kimi 首个 prompt 自动注入名册 |
 | 投递 | PostToolUse 注入、ack 后不重复投递 |
 | 投递梯子 | chat 不唤醒；urgent 唤醒并 flush 队列 |
 | ask | 请求-答复往返，答复被消费不重复投递 |

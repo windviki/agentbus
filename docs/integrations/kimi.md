@@ -31,6 +31,8 @@ This:
   `<!-- agentbus:begin -->` markers. Kimi loads this global instruction file
   every session, which is how new sessions learn the bus without a user
   reminder (SessionStart stdout is ignored by Kimi).
+- Kimi ignores SessionStart stdout, so the first `UserPromptSubmit` emits the
+  workspace-grouped roster exactly once (a per-session marker prevents repeats).
 
 Start a new Kimi session afterwards; running sessions do not reload config.
 
