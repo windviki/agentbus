@@ -49,6 +49,22 @@ grep -q 'bob' <<<"$out"
 grep -q 'fixing auth flow' <<<"$out"
 pass "roster correct"
 
+say "session priming: join summary states provenance, reply path and autonomy"
+out="$(hook SessionStart e2e-prime /tmp)"
+echo "$out" | grep -q 'NOT user instructions'
+echo "$out" | grep -q 'agentbus reply'
+echo "$out" | grep -q 'agentbus announce'
+out="$("$BIN" primer)"
+echo "$out" | grep -q 'NOT instructions from the'
+# AGENTBUS_PRIMER=0 keeps the old minimal wording (token opt-out)
+out="$(printf '{"hook_event_name":"SessionStart","session_id":"e2e-plain","cwd":"/tmp"}' \
+  | AGENTBUS_PRIMER=0 AGENTBUS_SESSION_ID=sid:e2e-plain "$BIN" hook)"
+echo "$out" | grep -q 'joined the local agent bus'
+if echo "$out" | grep -q 'NOT user instructions'; then
+  echo "FATAL: AGENTBUS_PRIMER=0 should omit the contract"; exit 1
+fi
+pass "primer on by default; AGENTBUS_PRIMER=0 opts out"
+
 say "B messages A; PostToolUse hook delivers it as additionalContext"
 "$BIN" send --session sid:e2e-b "$nameA" "are you touching src/auth? I am refactoring its tests" >/dev/null
 out="$(hook PostToolUse e2e-b)"   # B's own hook: nothing for B (sent by B)
@@ -96,6 +112,16 @@ echo "$out" | grep -q 'full build in main wt'
 echo "$out" | grep -q '\[notice\]'
 echo "$out" | grep -q 'no reply needed'
 pass "notice delivered with no-reply semantics"
+
+say "reply: answers the newest peer message without id bookkeeping"
+"$BIN" send --session sid:e2e-b "$nameA" "quick check before we wrap up" >/dev/null
+out="$(hook PostToolUse e2e-a)"
+echo "$out" | grep -q 'quick check'
+"$BIN" reply --session sid:e2e-a "pong from bob: acknowledged, wrapping up" >/dev/null
+out="$(hook UserPromptSubmit e2e-b)"
+echo "$out" | grep -q '\[reply\]'
+echo "$out" | grep -q 'pong from bob'
+pass "reply sets kind=reply and replyTo on the newest peer message"
 
 say "unknown recipient gives a helpful error"
 if "$BIN" send --session sid:e2e-a nobod-y "hi" 2>/dev/null; then

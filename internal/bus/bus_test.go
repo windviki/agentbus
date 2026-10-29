@@ -338,3 +338,37 @@ func TestAskTakeFrom(t *testing.T) {
 		t.Fatal("TakeFrom should time out with no reply pending")
 	}
 }
+
+func TestLastPeerReplyTarget(t *testing.T) {
+	b, _ := newTestBus()
+	b.Register("sid:a", "alice", "", "", "", 0, "")
+	b.Register("sid:b", "bob", "", "", "", 0, "")
+	b.Register("sid:c", "carol", "", "", "", 0, "")
+	if _, ok := b.LastPeer("sid:a", ""); ok {
+		t.Fatal("no message delivered yet")
+	}
+	// a human message and two peer messages, all delivered in one poll
+	b.Send("user", "alice", "human note", KindChat, "")
+	first, _, _, _ := b.Send("bob", "alice", "first", KindRequest, "")
+	b.Send("carol", "alice", "second", KindChat, "")
+	if _, _, err := b.Poll("sid:a", true, 0); err != nil {
+		t.Fatal(err)
+	}
+	last, ok := b.LastPeer("sid:a", "")
+	if !ok || last.From != "carol" {
+		t.Fatalf("newest peer should be carol, got %+v ok=%v", last, ok)
+	}
+	last, ok = b.LastPeer("sid:a", "bob")
+	if !ok || last.ID != first.ID {
+		t.Fatalf("filtered peer should be bob's request, got %+v", last)
+	}
+	// a peer that left is not a valid reply target anymore
+	b.Leave("sid:b")
+	if _, ok := b.LastPeer("sid:a", "bob"); ok {
+		t.Fatal("departed peer must not be a reply target")
+	}
+	// ... but the remaining live peer still is
+	if last, ok := b.LastPeer("sid:a", ""); !ok || last.From != "carol" {
+		t.Fatalf("carol should still be reachable, got %+v", last)
+	}
+}

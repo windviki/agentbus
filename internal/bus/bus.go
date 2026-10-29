@@ -46,7 +46,7 @@ type Msg struct {
 	Ts      int64  `json:"ts"`
 }
 
-// Message kinds — they drive delivery behaviour (see DESIGN.md "delivery
+// Message kinds — they drive delivery behaviour (see docs/design.md "delivery
 // ladder"): only Urgent may wake an idle session via the Stop hook; the rest
 // are injected at the next natural boundary (next tool call / next prompt).
 const (
@@ -413,6 +413,35 @@ func (b *Bus) Mine(id string) ([]Msg, string, error) {
 		return nil, "", fmt.Errorf("%w: %s", ErrUnknownSession, id)
 	}
 	return append([]Msg(nil), b.mine[s.Name]...), s.Name, nil
+}
+
+// LastPeer returns the most recently delivered message that came from a live
+// peer session (optionally only from `peer`) — the message `agentbus reply`
+// answers. Messages from the human ("user") and from sessions that have
+// already left are skipped so a reply always has a real recipient.
+func (b *Bus) LastPeer(id, peer string) (Msg, bool) {
+	peer = strings.ToLower(strings.TrimSpace(peer))
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := b.sess[id]
+	if s == nil {
+		return Msg{}, false
+	}
+	q := b.mine[s.Name]
+	for i := len(q) - 1; i >= 0; i-- {
+		m := q[i]
+		if m.From == "" || m.From == "user" {
+			continue
+		}
+		if peer != "" && strings.ToLower(m.From) != peer {
+			continue
+		}
+		if b.byName[m.From] == nil {
+			continue // peer already gone: replying would fail
+		}
+		return m, true
+	}
+	return Msg{}, false
 }
 
 // Log returns the tail of the global message history (all deliveries).

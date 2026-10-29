@@ -1,0 +1,10 @@
+# dsh bundle patch: inserts the agentbus bridge into a profile's layer stack.
+# For a local checkout, either install this package with
+#   dsh plugin --profile <name> add /path/to/agentbus/integrations/dsh/plugin
+# or insert an absolute path row in the profile's cordis.patch.yml:
+#   - insert:
+#       - id: agentbus
+#         name: /path/to/agentbus/integrations/dsh/plugin/lib/index.js
+- insert:
+    - id: agentbus
+      name: dsh-agentbus

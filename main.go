@@ -52,8 +52,12 @@ func run(args []string) int {
 		return cmdSend(rest)
 	case "ask":
 		return cmdAsk(rest)
+	case "reply":
+		return cmdReply(rest)
 	case "notify":
 		return cmdNotify(rest)
+	case "primer":
+		return cmdPrimer(rest)
 	case "mcp":
 		return cmdMcp(rest)
 	case "inbox":
@@ -90,7 +94,10 @@ Usage:
   agentbus send <name|all> "message"         # message a peer / broadcast
                                              #   --kind chat|request|reply|notice|urgent
   agentbus ask <name> "question" [--wait 120] # send a request and wait for the reply
+  agentbus reply "message" [--to <name>]     # answer the latest peer message
   agentbus notify <name|all> "information"   # one-way notice (no reply expected)
+  agentbus primer                            # print the session contract a harness
+                                             # should load (system prompt / AGENTS.md)
   agentbus inbox [--wait 60] [--peek]        # read your messages
   agentbus leave                             # leave the bus (automatic on exit anyway)
   agentbus log [-n 20]                       # recent bus traffic (all sessions)
@@ -109,6 +116,7 @@ to override; humans without a session send as "user".
 
 Env: AGENTBUS_HOME (default ~/.agentbus), AGENTBUS_AGENT (force agent label),
      AGENTBUS_NAME (preferred name for hook registration),
+     AGENTBUS_PRIMER=0 (omit the session contract from the join summary),
      AGENTBUS_WAKE (all = wake idle sessions on any message; default: urgent only),
      AGENTBUS_WEB_PORT (dashboard port, default 8787), AGENTBUS_WEB=0 (disable),
      AGENTBUS_WEB_TOKEN (require bearer token on the dashboard/A2A HTTP API).
@@ -142,16 +150,24 @@ func sessionKey(explicit string) string {
 }
 
 // hookSessionKey prefers env vars (cheapest), then the hook stdin payload's
-// session_id, then the owning agent process.
+// session_id, then the owning agent process. IDs are normalized to a single
+// "sid:" prefix so a caller that already speaks the canonical form (for
+// example the DSH plugin passing "sid:session-…") is not double-prefixed.
 func hookSessionKey(stdinSid string) string {
-	if v := os.Getenv("AGENTBUS_SESSION_ID"); v != "" {
+	sidKey := func(v string) string {
+		if strings.HasPrefix(v, "sid:") {
+			return v
+		}
 		return "sid:" + v
+	}
+	if v := os.Getenv("AGENTBUS_SESSION_ID"); v != "" {
+		return sidKey(v)
 	}
 	if v := os.Getenv("CLAUDE_SESSION_ID"); v != "" {
-		return "sid:" + v
+		return sidKey(v)
 	}
 	if stdinSid != "" {
-		return "sid:" + stdinSid
+		return sidKey(stdinSid)
 	}
 	if a := procinfo.Detect(); a.Pid > 0 {
 		return fmt.Sprintf("pid:%d:%s", a.Pid, a.Start)
@@ -537,6 +553,41 @@ func cmdAsk(args []string) int {
 	}
 	m := resp.Messages[0]
 	fmt.Printf("[agentbus] reply from %s:\n%s\n", m.From, m.Body)
+	return 0
+}
+
+// cmdReply: answer the most recent peer message (kind=reply with replyTo set),
+// so agents do not need to track message ids themselves.
+func cmdReply(args []string) int {
+	fs := newFlagSet("reply")
+	session := fs.String("session", "", "session key override")
+	to := fs.String("to", "", "reply to this peer (default: the most recent peer message)")
+	if err := fs.Parse(args); err != nil {
+		return fail("bad flags: %v", err)
+	}
+	if fs.NArg() < 1 {
+		return fail("usage: agentbus reply \"message\" [--to <name>]")
+	}
+	key := sessionKey(*session)
+	if key == "" {
+		return fail("no agent session detected; run inside an agent session or pass --session <key>")
+	}
+	body := strings.Join(fs.Args(), " ")
+	resp, err := client.Call(busHome(), true, proto.Request{Op: "reply", ID: key, To: *to, Body: body})
+	if err != nil {
+		return fail("%v", err)
+	}
+	if !resp.Ok {
+		return fail("%s", resp.Error)
+	}
+	fmt.Printf("[agentbus] replied to %s\n", resp.Peer)
+	return 0
+}
+
+// cmdPrimer prints the session contract for harnesses that can load it into a
+// system prompt / AGENTS.md instead of relying on hook injection.
+func cmdPrimer(args []string) int {
+	fmt.Print(primerText())
 	return 0
 }
 

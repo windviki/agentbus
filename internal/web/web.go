@@ -159,7 +159,7 @@ func (s *server) handleSend(w http.ResponseWriter, r *http.Request) {
 // agentbus speaks a pragmatic subset of A2A (agentprotocol spec): JSON-RPC 2.0
 // over HTTP, `message/send` with text parts, one agent URL per session at
 // /a2a/{name}, and an Agent Card at /.well-known/agent-card.json relative to
-// that URL. Streaming/tasks/artifacts are not implemented (v1); see DESIGN.md
+// that URL. Streaming/tasks/artifacts are not implemented (v1); see docs/design.md
 // for the envelope mapping.
 
 func (s *server) handleRootCard(w http.ResponseWriter, r *http.Request) {

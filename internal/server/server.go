@@ -187,6 +187,27 @@ func (s *Server) dispatch(r *proto.Request) (proto.Response, bool) {
 			resp.Messages = []bus.Msg{reply}
 		}
 		s.save()
+	case "reply":
+		// Answer the most recent delivered peer message (kind=reply with
+		// replyTo pointing at it), so agents can reply without bookkeeping
+		// message ids themselves.
+		if r.ID == "" {
+			return errResp(fmt.Errorf("reply requires a session identity")), false
+		}
+		name, ok := s.b.NameOf(r.ID)
+		if !ok {
+			return errResp(fmt.Errorf("unknown session %s", r.ID)), false
+		}
+		last, ok := s.b.LastPeer(r.ID, r.To)
+		if !ok {
+			return errResp(fmt.Errorf("no recent peer message to reply to (use: agentbus send <name> \"...\")")), false
+		}
+		m, _, _, err := s.b.Send(name, last.From, r.Body, bus.KindReply, last.ID)
+		if err != nil {
+			return errResp(err), false
+		}
+		resp.MsgID, resp.Peer = m.ID, last.From
+		s.save()
 	case "poll":
 		ack := true
 		if r.Ack != nil {

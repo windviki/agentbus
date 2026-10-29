@@ -35,6 +35,7 @@ type Response struct {
 	Home        string        `json:"home,omitempty"`
 	Uptime      int64         `json:"uptime,omitempty"`
 	Name        string        `json:"name,omitempty"`
+	Peer        string        `json:"peer,omitempty"`
 	RenamedFrom string        `json:"renamed_from,omitempty"`
 	Agent       string        `json:"agent,omitempty"`
 	MsgID       string        `json:"msg_id,omitempty"`
