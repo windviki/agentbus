@@ -128,7 +128,38 @@ RUN_INTEROP=1 RUN_INTEROP_BASELINE=1 ./test/interop.sh   # 再加无 primer 基�
 （桌面账号 provider 对独立 CLI 不可见），这是 CLI 限制；测试时临时启用
 API-key provider 并还原，详见 [integrations/zcode.md](integrations/zcode.md)。
 
-## 7. 提交前检查清单
+## 7. Kimi hooks 契约验证（2026-10-29）
+
+本机 Kimi 7 天额度用尽（429），无法起真实模型会话；用真实 hook payload 验证：
+
+```bash
+printf '%s' '{"hook_event_name":"SessionStart","session_id":"kimi-sim-2",
+  "cwd":"/tmp/ab-zrepo","client_type":"kimi_code_cli"}' | agentbus hook
+# → 注册为 kimi 会话
+printf '%s' '{"hook_event_name":"UserPromptSubmit",...}' | agentbus hook
+# → 纯文本 peer 消息（Kimi 拼入上下文）
+printf '%s' '{"hook_event_name":"Stop",...}' | agentbus hook
+# → 有 urgent 时 exit 2，reason 在 stderr
+```
+
+安装见 [integrations/kimi.md](integrations/kimi.md)。额度恢复后用
+`kimi -p "..."` 做一次 live smoke test 即可。
+
+## 8. 看板显示 0 会话的排查
+
+若 `agentbus who` 有会话但看板/API 为空：
+
+```bash
+curl -s http://127.0.0.1:8787/api/state | jq '.sessions|length'
+# 找到占用 8787 的进程，核对它的 AGENTBUS_HOME
+ss -ltnp | grep 8787   # 或读 /proc/net/tcp + /proc/<pid>/fd
+```
+
+常见原因：早期测试 daemon 仍占用 8787，而 `~/.agentbus` 的 daemon 绑定失败
+（日志里是 `web disabled: bind: address already in use`）。停掉占用端口的
+测试 daemon，再重启默认 daemon 即可。
+
+## 9. 提交前检查清单
 
 ```bash
 gofmt -l .

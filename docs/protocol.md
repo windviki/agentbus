@@ -104,8 +104,13 @@ from, body, kind, reply_to, wait_ms, ack, n`。
 | `urgent` | 人类中断 / 紧急协作 | **是** |
 
 广播：`to="all"`，除发送者外的所有在线会话各收一份（独立投递与 ack）。
-`to="user"` 不是会话：消息进入全局日志与看板（人类可读），这样 agent 可以用
-`agentbus reply --to user "..."` 回应人类的中断/提问，而不是广播。
+`to="user"` / `to="user-web"` 不是会话：消息进入全局日志与看板（人类可读），
+这样 agent 可以用 `agentbus reply --to user "..."` 回应人类的中断/提问，而不是
+广播。看板发出的广播使用 `user-web` 身份，同样可被回复。
+
+Kimi Code 的 hook 输出模式不同：`client_type=kimi_code_cli` 时 `UserPromptSubmit`
+输出纯文本（Kimi 直接拼入上下文），Stop 用退出码 2 + stderr 表达继续；
+PostToolUse 是 observation-only，不做 poll/ack。
 
 ## 6. HTTP：看板与 A2A
 

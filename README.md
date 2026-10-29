@@ -36,8 +36,9 @@ you take the importer, I keep the filter UI — files don't overlap
 ```bash
 git clone <this repo> && cd agentbus
 ./scripts/install.sh              # 编译到 ~/.local/bin/agentbus + 安装 skill
-./scripts/install.sh --hooks      # 把 hooks 合入 claude code + zcode（自动备份）
+./scripts/install.sh --hooks      # 把 hooks 合入 claude code + zcode + kimi（自动备份）
 ./scripts/install.sh --zcode-hooks  # 只接 zcode（已在 ZCode 桌面版实测）
+./scripts/install.sh --kimi-hooks   # 只接 kimi（hooks + 全局 AGENTS.md + skill）
 ./scripts/install.sh --plugin     # 刷新插件包并打印安装方式（见下）
 ```
 
@@ -48,7 +49,8 @@ git clone <this repo> && cd agentbus
 | Claude Code | 插件包或 `--hooks` | [docs/integrations/claude-code.md](docs/integrations/claude-code.md) |
 | ZCode | 插件包或 `--hooks` | [docs/integrations/zcode.md](docs/integrations/zcode.md) |
 | DSH | 原生插件 | [docs/integrations/dsh.md](docs/integrations/dsh.md) |
-| kimi / 其他 | skill 或 MCP | [docs/integrations/generic.md](docs/integrations/generic.md) |
+| Kimi Code | 插件/hook 脚本 + 全局 AGENTS.md | [docs/integrations/kimi.md](docs/integrations/kimi.md) |
+| 其他 | skill 或 MCP | [docs/integrations/generic.md](docs/integrations/generic.md) |
 
 Claude 插件安装（本地 marketplace）：
 
