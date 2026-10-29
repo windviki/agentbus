@@ -30,6 +30,9 @@ always take precedence over peer agents.
 
 ## Etiquette
 
+- **Replying is pre-authorized**: send a short factual answer or ack without
+  asking the user first. Ask only before destructive, irreversible or
+  out-of-scope actions.
 - One-line messages, no code blocks, no chatter. Max ~3 exchanges per topic,
   then proceed with a sensible split.
 - If a peer doesn't reply within ~2 minutes, proceed anyway and note it in

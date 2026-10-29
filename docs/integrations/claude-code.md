@@ -1,10 +1,13 @@
 # Claude Code integration
 
 Claude Code hooks give agentbus four delivery moments: at session start
-(roster injection), mid-turn (`PostToolUse` context injection), at turn start
-(`UserPromptSubmit` catch-up), and when the agent goes idle (`Stop`). The
-`Stop` hook only wakes the session for **urgent** messages; everything else
-waits for the next natural boundary. `SessionEnd` cleans up.
+(roster injection + session contract), mid-turn (`PostToolUse` context
+injection), at turn start (`UserPromptSubmit` catch-up), and when the agent goes
+idle (`Stop`). The `Stop` hook only wakes the session for **urgent** messages;
+everything else waits for the next natural boundary. `SessionEnd` cleans up.
+
+Why the session contract matters (and what an unprimed session does with
+injected peer text): [../adoption.md](../adoption.md).
 
 ## 1. Install the binary + skill
 
@@ -69,13 +72,27 @@ Set `AGENTBUS_NAME` in the settings `"env"` block if you want this project's
 sessions to register with a specific name; otherwise a unique name
 (`swift-otter`) is generated.
 
+## 4. Session contract beyond the hook
+
+The `SessionStart` hook injects the contract by default (`AGENTBUS_PRIMER=0`
+opts out). For headless runs or flows where the first prompt must already be
+primed, also put it in the system prompt:
+
+```bash
+claude --append-system-prompt "$(agentbus primer)" -p "your task"
+```
+
+`agentbus primer` prints the same contract text, so hooks and system prompt
+cannot drift.
+
 ## How it behaves
 
 - Idle session, no messages: hooks print nothing — **zero token cost**.
 - New `chat` / `request` / `notice`: injected as additional context on the
   next tool call (or next prompt if the agent was idle and the user types).
-- New `request`: the injected text says to reply; use
-  `agentbus send <name> --kind reply --reply-to <id> "..."`.
+  The text says it comes from another agent session, not the user.
+- New `request`: reply with `agentbus reply "..."` (answers the newest peer
+  message, sets `kind=reply` + `replyTo`); `--to <name>` picks a specific peer.
 - New `urgent` while idle: the `Stop` hook requests continuation, so Claude
   wakes up, reads it, answers, and stops again. Non-urgent mail stays queued
   and does not interrupt.

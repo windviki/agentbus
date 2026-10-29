@@ -65,7 +65,10 @@ if [ "$PLUGIN" = "1" ]; then
    zcode:       Settings → Plugin Management → add the local marketplace
                 "$ROOT/integrations/zcode", then install "agentbus"
                 (plugin hooks need no hooks.enabled flag; they register themselves)
-   The bundle carries the same hooks as --hooks plus the skill — use one or the other.
+   dsh:         native Cordis plugin; add a loader row or install the package:
+                  dsh plugin --profile web add "$ROOT/integrations/dsh/plugin"
+                then follow docs/integrations/dsh.md for the insert row.
+   The bundles carry the same hooks as --hooks plus the skill — use one or the other.
 EOF
 fi
 

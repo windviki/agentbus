@@ -64,10 +64,14 @@ Notes:
 - ZCode's `Stop` hook may request continuation up to three times per stop,
   which conveniently bounds any wake-up loop.
 - Only `urgent` messages are allowed to interrupt an idle session; chat /
-  request / notice wait for the next prompt or tool call.
+  request / notice wait for the next prompt or tool call. Reply with
+  `agentbus reply "..."` (or `agentbus send <name> ...` for a specific peer).
 - `${CLAUDE_SESSION_ID}` is injected as an environment variable in hooks —
   `agentbus hook` picks it up automatically.
 - Liveness: ZCode's node process is detected via `/proc` ancestry; exit ⇒
   session reaped without any explicit logout (no `SessionEnd` event exists).
+- The `SessionStart` hook injects the session contract by default
+  (`AGENTBUS_PRIMER=0` opts out); the rationale is in
+  [../adoption.md](../adoption.md).
 - The dashboard is available at `http://127.0.0.1:8787/` (behind code-server:
   `/proxy/8787/`); `agentbus status` prints the actual URL.

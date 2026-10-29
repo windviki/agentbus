@@ -114,11 +114,17 @@ message envelope 靠拢（`messageId` / `replyTo` / `kind`），HTTP 边界可�
 对端的第一条消息"并**取走**（`TakeFrom`），所以答复不会被后续 hook 再投一次；
 其它消息原样留在队列里，仍按梯子投递。
 
+`reply` 的答复对象：daemon 记住每个会话最近投递的 5 条消息，`agentbus reply
+"..."` 自动选中其中最新的一条**在线对端**消息（跳过人类 `user` 和已离开的
+会话），以 kind=reply + replyTo 发出。这样注入文本不必携带长 messageId，agent
+也不会因为记错 id 而回复失败；需要精确对应时仍可用
+`send --kind reply --reply-to <id>`。
+
 投递梯子（越往下越"越界"）：
 
 | host 事件 | agent 状态 | agentbus 行为 |
 |---|---|---|
-| `SessionStart` | 刚启动 | 注册 + 注入名册（其他人 + 他们的 status）——"发现 bob 在做 XXX"的时刻 |
+| `SessionStart` | 刚启动 | 注册 + 注入**会话契约（primer）+ 名册**——既告诉它"谁在做 XXX"，也告诉它"这些消息是什么、该怎么回应" |
 | `PostToolUse`（任意工具） | 工作中 | poll：有信则 `additionalContext` 注入，无信静默 |
 | `UserPromptSubmit` | 回合开始 | 同上（补齐用户不在时错过的） |
 | `Stop` | 即将空闲 | **先 peek**：仅当队列含 urgent 才 `{"decision":"block","reason":…}` 唤醒并 flush 队列；否则保持静默，消息留到下一个自然边界 |
@@ -126,13 +132,16 @@ message envelope 靠拢（`messageId` / `replyTo` / `kind`），HTTP 边界可�
 
 `AGENTBUS_WAKE=all` 恢复"任意消息都可唤醒"的旧行为。poll 即 ack（消息只投
 一次），ack 后保留最近 5 条供 `inbox --peek` 复读。注入文本保持紧凑
-（见 render.go），例如：
+（见 render.go），并显式标注来源与可回复动作：
 
 ```
-[agentbus] 1 new message:
+[agentbus] 1 peer message (from other agent sessions, not the user):
 [14:32] [request] yarrow-yak→bob: starting tag-import refactor - does it overlap your filter UI work?
-[agentbus] reply promptly: agentbus send yarrow-yak "..." · roster: agentbus who
+[agentbus] reply: agentbus reply "..."  (or agentbus send yarrow-yak "...") · roster: agentbus who
 ```
+
+为什么必须做这层 framing、未铺垫的会话会怎么处理注入文本、以及"愿不愿意用"
+的实测记录，见 [adoption.md](adoption.md)。
 
 ## 6. Web 看板与 A2A boundary
 
@@ -203,7 +212,8 @@ hook 的"空闲零成本"严格更优（MCP schema 常驻上下文）。
 |---|---|---|
 | claude code | hooks + skill，或 plugin 包 | 名册 / 工作中 / 回合开始 / 空闲唤醒 / 退出清理 |
 | zcode | hooks + skill（配置需 `hooks.enabled:true`；plugin 自带无需开关），或 plugin 包 | 同上 minus 退出（PID 回收） |
-| kimi / dsh / 其他 | skill only，或 `agentbus mcp`（身份走 /proc 祖先） | 主动：who/announce/inbox（`--wait` 长轮询） |
+| dsh | 原生 Cordis 插件（`integrations/dsh/plugin`） | 名册/契约、回合边界、工具调用后；urgent 经 `agent.turn-stopping` steer 唤醒 |
+| kimi / 其他 | skill only，或 `agentbus mcp`（身份走 /proc 祖先） | 主动：who/announce/inbox（`--wait` 长轮询） |
 | 人类 / 外部系统 | Web 看板、`/api/send`、A2A `message/send` | 看板实时；A2A 同步返回 |
 
 ## 12. 失败模式与行为
@@ -218,10 +228,13 @@ hook 的"空闲零成本"严格更优（MCP schema 常驻上下文）。
 | 看板端口被占 | 只记日志，总线与 hook 照常；`status` 不显示 web 地址 |
 | A2A 未知方法 | JSON-RPC `-32601`，连接不断 |
 | `ask` 等不到答复 | 退出码 1 + 提示 `inbox --peek` 稍后取，不阻塞会话 |
+| `reply` 没有可回复的对端 | 明确报错并提示改用 `send <name>`；不会误发给人类或已离开的会话 |
 | MCP 客户端发 notification | 无 id 直接忽略（JSON-RPC 语义） |
 
 ## 13. 未来方向
 
+- 把"会话采纳率"做成可观测量（announce 覆盖率、request 回复率、urgent 误用率），
+  用来调 primer 与 skill 的措辞；
 - channels/topics（`#frontend`）与 worktree 感知的冲突提示（同 repo 不同 branch 自动提醒）；
 - TCP + token auth 跨机器（复用 `AGENTBUS_WEB_TOKEN` 的校验思路）；
 - 看板上的消息搜索与历史回放（当前只有环形日志的最近 300 条）。

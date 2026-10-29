@@ -34,7 +34,7 @@
   跨网络的常驻服务 agent** 互操作。要为两个本地终端会话跑 HTTP server +
   JSON-RPC 生命周期，完全不成比例；且各 CLI 也不会内嵌 A2A server。
   （v1 只补了 loopback 上的 A2A 子集——Agent Card + `message/send`——让外部
-  客户端能接入同一份总线；任务/artifact/SSE 不做，见 DESIGN.md §6。）
+  客户端能接入同一份总线；任务/artifact/SSE 不做，见 [design.md](design.md) §6。）
 
 ### C. 同方向但极早期的项目（≤2 星）
 

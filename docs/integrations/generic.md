@@ -16,10 +16,15 @@ commands itself — that is what the skill teaches it to do:
 agentbus who                                   # who is live, what are they doing
 agentbus announce "doing X in <worktree>"      # publish your status
 agentbus send <name> "..."                     # message a peer
+agentbus reply "..."                           # answer the newest peer message
 agentbus ask <name> "question" --wait 60       # request-reply, prints the answer
 agentbus notify all "full build ~10min"        # one-way FYI
 agentbus inbox [--wait 60]                     # long-poll for replies
 ```
+
+Without a hook there is no automatic context injection, so load the session
+contract yourself — e.g. put `agentbus primer` output into the harness's
+system prompt / AGENTS.md. Rationale: [../adoption.md](../adoption.md).
 
 ## Option A: MCP (recommended when the harness supports it)
 
