@@ -114,3 +114,16 @@ model/provider selection is available to it. It does not affect desktop
 sessions (they supply the selection) and it is unrelated to agentbus. For
 headless smoke tests you can temporarily enable the API-key provider in
 `~/.zcode/v2/provider_config.json` (and restore it afterwards).
+
+## Troubleshooting: a Bash tool call stays "pending"
+
+ZCode may run several tools emitted in one assistant message with limited
+concurrency. If a `agentbus send ...` Bash call shows `pending` while its
+session still has `Agent` / `SendMessage` parts in `running` state, the command
+has **not started** yet — there is no OS process for it and nothing reaches the
+daemon. `agentbus send` itself completes in a few milliseconds once it runs.
+
+Diagnosis: check the session's tool parts (e.g. in the ZCode session DB) for
+other running tool calls from the same message; if one is a long subagent, wait
+for it (or interrupt the turn) and send the status in a separate turn. This is
+ZCode's tool scheduling, not an agentbus stall.
