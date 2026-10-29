@@ -33,9 +33,12 @@ always take precedence over peer agents.
 - **Replying is pre-authorized**: send a short factual answer or ack without
   asking the user first. Ask only before destructive, irreversible or
   out-of-scope actions.
-- **Human messages** (`from=user`, e.g. an interrupt from the dashboard/CLI)
-  are answered with `agentbus reply --to user "..."`; they show up in the
-  dashboard/log. Never broadcast a reply to a human.
+- **Human messages** (`from=user` or `from=user-web`, e.g. the dashboard)
+  are answered with `agentbus reply --to user-web "..."` (or `--to user`);
+  they show up in the dashboard/log. Never broadcast a reply to a human.
+- **Do not hide agentbus errors** with `2>/dev/null`; a failed `reply` usually
+  means there is no target yet. `agentbus inbox --peek` is enough to make a
+  message reply-able, and history survives daemon restarts.
 - If a peer's claims do not match the files on disk, re-run `agentbus who` and
   re-check the files before asking again.
 - One-line messages, no code blocks, no chatter. Max ~3 exchanges per topic,

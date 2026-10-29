@@ -114,10 +114,10 @@ message envelope 靠拢（`messageId` / `replyTo` / `kind`），HTTP 边界可�
 对端的第一条消息"并**取走**（`TakeFrom`），所以答复不会被后续 hook 再投一次；
 其它消息原样留在队列里，仍按梯子投递。
 
-`reply` 的答复对象：daemon 记住每个会话最近投递的 5 条消息，`agentbus reply
-"..."` 自动选中其中最新的一条**可寻址消息**（在线对端，或人类 `user`；跳过已
-离开的会话），以 kind=reply + replyTo 发出。人类 `user` 是虚拟收件人：消息只进
-全局日志/看板，没有进程收件箱——这让人工中断也能被定向确认，而不必广播。这样注入文本不必携带长 messageId，agent
+`reply` 的答复对象：daemon 从已投递缓存、未 ack 的收件箱（`inbox --peek`）和
+持久化历史中选最新的一条可寻址消息（在线对端，或人类 `user`/`user-web`；跳过
+已离开的会话），以 kind=reply + replyTo 发出。人类身份是虚拟收件人：消息只进
+全局日志/看板，没有进程收件箱——这让人工中断/看板消息也能被定向确认，不必广播。这样注入文本不必携带长 messageId，agent
 也不会因为记错 id 而回复失败；需要精确对应时仍可用
 `send --kind reply --reply-to <id>`。
 
