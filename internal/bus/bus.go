@@ -277,7 +277,7 @@ func (b *Bus) Send(from, to, body, kind, replyTo string) (Msg, int, bool, error)
 	// deliver to, but the message belongs in the global log/dashboard so a
 	// human can read it. This makes `agentbus reply` work for human messages
 	// (for example an urgent interrupt sent from the CLI/dashboard).
-	human := dest == "user"
+	human := dest == "user" || dest == "user-web"
 	m := Msg{ID: b.nextIDLocked(), ReplyTo: replyTo, From: from, To: dest, Kind: kind, Body: body, Ts: now}
 
 	key := from + "\x00" + dest + "\x00" + body
@@ -448,7 +448,7 @@ func (b *Bus) LastPeer(id, peer string) (Msg, bool) {
 		}
 		// "user" is the addressable human side; other senders must still be
 		// live for a reply to reach them.
-		if m.From != "user" && b.byName[m.From] == nil {
+		if m.From != "user" && m.From != "user-web" && b.byName[m.From] == nil {
 			continue
 		}
 		return m, true

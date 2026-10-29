@@ -339,9 +339,10 @@ func cmdStatus(args []string) int {
 func cmdHook(args []string) int {
 	in, _ := io.ReadAll(os.Stdin)
 	var h struct {
-		EventName string `json:"hook_event_name"`
-		SessionID string `json:"session_id"`
-		Cwd       string `json:"cwd"`
+		EventName  string `json:"hook_event_name"`
+		SessionID  string `json:"session_id"`
+		Cwd        string `json:"cwd"`
+		ClientType string `json:"client_type"`
 	}
 	_ = json.Unmarshal(in, &h)
 	home := busHome()
@@ -350,6 +351,10 @@ func cmdHook(args []string) int {
 		return 0 // not called from inside an agent session
 	}
 	recordPidMap(home, key)
+	// Kimi's hook contract differs from Claude Code / ZCode: plain stdout is
+	// appended to the model context, and Stop blocks by exiting 2 with the
+	// reason on stderr (no JSON envelope).
+	kimi := h.ClientType == "kimi_code_cli"
 	switch h.EventName {
 	case "SessionStart":
 		pid, pidStart, label := detectAgent()
@@ -365,8 +370,24 @@ func cmdHook(args []string) int {
 			hookFail(home, err, resp)
 			return 0
 		}
-		fmt.Print(hookContextJSON("SessionStart", joinSummary(resp)))
-	case "UserPromptSubmit", "PostToolUse", "PostToolUseFailure":
+		if !kimi {
+			fmt.Print(hookContextJSON("SessionStart", joinSummary(resp)))
+		}
+	case "UserPromptSubmit":
+		if msgs := pollForHook(home, key); len(msgs) > 0 {
+			if kimi {
+				fmt.Print(incomingText(msgs))
+			} else {
+				fmt.Print(hookContextJSON(h.EventName, incomingText(msgs)))
+			}
+		}
+	case "PostToolUse", "PostToolUseFailure":
+		// Kimi treats these as observation-only: stdout is ignored, so polling
+		// here would consume messages without showing them. Leave mail queued
+		// for the next prompt, the Stop wake, or an explicit `agentbus inbox`.
+		if kimi {
+			return 0
+		}
 		if msgs := pollForHook(home, key); len(msgs) > 0 {
 			fmt.Print(hookContextJSON(h.EventName, incomingText(msgs)))
 		}
@@ -387,6 +408,10 @@ func cmdHook(args []string) int {
 		resp, err = client.Call(home, true, proto.Request{Op: "poll", ID: key, Ack: &take})
 		if err != nil || !resp.Ok || len(resp.Messages) == 0 {
 			return 0
+		}
+		if kimi {
+			fmt.Fprint(os.Stderr, stopReason(resp.Messages))
+			return 2
 		}
 		fmt.Print(stopBlockJSON(stopReason(resp.Messages)))
 	case "SessionEnd":

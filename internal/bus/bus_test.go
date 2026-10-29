@@ -397,4 +397,17 @@ func TestHumanRecipientAndReplyTarget(t *testing.T) {
 	if !ok || last.Body != "please stop" {
 		t.Fatalf("human message should be addressable, got %+v ok=%v", last, ok)
 	}
+	// the dashboard identity is addressable too
+	if _, _, _, err := b.Send("user-web", "alice", "status?", KindChat, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := b.Poll("sid:a", true, 0); err != nil {
+		t.Fatal(err)
+	}
+	if last, ok := b.LastPeer("sid:a", "user-web"); !ok || last.From != "user-web" {
+		t.Fatalf("user-web should be addressable, got %+v ok=%v", last, ok)
+	}
+	if _, n, _, err := b.Send("alice", "user-web", "running", KindReply, ""); err != nil || n != 1 {
+		t.Fatalf("reply to user-web: %v n=%d", err, n)
+	}
 }

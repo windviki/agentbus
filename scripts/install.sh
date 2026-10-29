@@ -4,9 +4,10 @@
 #
 # Usage:
 #   ./scripts/install.sh                 # binary + skill
-#   ./scripts/install.sh --hooks         # wire hooks for claude code + zcode
+#   ./scripts/install.sh --hooks         # wire hooks for claude code + zcode + kimi
 #   ./scripts/install.sh --zcode-hooks   # wire hooks for zcode only
 #   ./scripts/install.sh --claude-hooks  # wire hooks for claude code only
+#   ./scripts/install.sh --kimi-hooks    # wire hooks for kimi only
 #   ./scripts/install.sh --plugin        # refresh + show installable plugin bundles
 set -euo pipefail
 
@@ -14,22 +15,24 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN_DEST="${AGENTBUS_BIN:-$HOME/.local/bin}"
 CLAUDE_HOOKS=0
 ZCODE_HOOKS=0
+KIMI_HOOKS=0
 PLUGIN=0
 for arg in "$@"; do
   case "$arg" in
-    --hooks)        CLAUDE_HOOKS=1; ZCODE_HOOKS=1 ;;
+    --hooks)        CLAUDE_HOOKS=1; ZCODE_HOOKS=1; KIMI_HOOKS=1 ;;
     --claude-hooks) CLAUDE_HOOKS=1 ;;
     --zcode-hooks)  ZCODE_HOOKS=1 ;;
+    --kimi-hooks)   KIMI_HOOKS=1 ;;
     --plugin)       PLUGIN=1 ;;
     -h|--help)
       sed -n '5,10p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *)
-      echo "unknown option: $arg (expected --hooks, --claude-hooks, --zcode-hooks or --plugin)" >&2
+      echo "unknown option: $arg (expected --hooks, --claude-hooks, --zcode-hooks, --kimi-hooks or --plugin)" >&2
       exit 2 ;;
   esac
 done
-if { [ "$CLAUDE_HOOKS" = "1" ] || [ "$ZCODE_HOOKS" = "1" ]; } && [ "$PLUGIN" = "1" ]; then
+if { [ "$CLAUDE_HOOKS" = "1" ] || [ "$ZCODE_HOOKS" = "1" ] || [ "$KIMI_HOOKS" = "1" ]; } && [ "$PLUGIN" = "1" ]; then
   echo "hooks and --plugin wire the same events; pick one to avoid double delivery" >&2
   exit 2
 fi
@@ -56,7 +59,8 @@ install_skill "$HOME/.claude/skills/agentbus"             # claude code, if pres
 if [ ! -f "$HOME/.agents/skills/agentbus/SKILL.md" ]; then
   install_skill "$HOME/.zcode/skills/agentbus"
 fi
-install_skill "$HOME/.kimi/skills/agentbus"               # kimi, if present
+install_skill "$HOME/.kimi/skills/agentbus"               # legacy kimi, if present
+install_skill "$HOME/.kimi-code/skills/agentbus"          # kimi code, if present
 
 if [ "$PLUGIN" = "1" ]; then
   echo "== plugin bundles (hooks + skill in one package)"
@@ -82,7 +86,7 @@ if [ "$PLUGIN" = "1" ]; then
 EOF
 fi
 
-if [ "$CLAUDE_HOOKS" = "1" ] || [ "$ZCODE_HOOKS" = "1" ]; then
+if [ "$CLAUDE_HOOKS" = "1" ] || [ "$ZCODE_HOOKS" = "1" ] || [ "$KIMI_HOOKS" = "1" ]; then
   echo "== wiring hooks"
   command -v python3 >/dev/null || { echo "   !! python3 required; skipping hooks (see docs/integrations/)"; exit 1; }
   ROOT="$ROOT" DO_CLAUDE="$CLAUDE_HOOKS" DO_ZCODE="$ZCODE_HOOKS" python3 - <<'PY'
@@ -145,6 +149,64 @@ if os.environ.get("DO_ZCODE") == "1":
                     if "agentbus" not in json.dumps(e)]
             events[event] = kept + entries
         save_json(path, cfg)
+
+if os.environ.get("DO_KIMI") == "1":
+    # Kimi Code: TOML [[hooks]] array; stdout is appended to context and Stop
+    # blocks with exit code 2, so `agentbus hook` switches output modes from
+    # the payload's client_type.
+    home = os.path.expanduser("~/.kimi-code")
+    path = os.path.join(home, "config.toml")
+    if os.path.exists(path):
+        text = open(path).read()
+        marker = "# agentbus hooks"
+        if marker not in text:
+            shutil.copyfile(path, path + ".agentbus-bak")
+            binary = os.path.join(os.environ.get("BIN_DEST", os.path.expanduser("~/.local/bin")), "agentbus")
+            block = f"""
+# agentbus hooks (managed by agentbus; remove this block to uninstall)
+[[hooks]]
+event = "SessionStart"
+command = "{binary} hook"
+timeout = 15
+
+[[hooks]]
+event = "UserPromptSubmit"
+command = "{binary} hook"
+timeout = 5
+
+[[hooks]]
+event = "PostToolUse"
+command = "{binary} hook"
+timeout = 5
+
+[[hooks]]
+event = "Stop"
+command = "{binary} hook"
+timeout = 5
+
+[[hooks]]
+event = "SessionEnd"
+command = "{binary} hook"
+timeout = 5
+"""
+            with open(path, "a") as f:
+                f.write(block)
+            print(f"   hooks: {path} (backup at .agentbus-bak)")
+        else:
+            print(f"   hooks: {path} (already configured)")
+        # Global instructions: Kimi loads ~/.kimi-code/AGENTS.md every session.
+        agents = os.path.join(home, "AGENTS.md")
+        primer = os.popen(binary + " primer").read()
+        block = "<!-- agentbus:begin -->\n" + primer + "<!-- agentbus:end -->\n"
+        existing = open(agents).read() if os.path.exists(agents) else ""
+        if "<!-- agentbus:begin -->" not in existing:
+            if os.path.exists(agents):
+                shutil.copyfile(agents, agents + ".agentbus-bak")
+            with open(agents, "a") as f:
+                f.write("\n" + block)
+            print(f"   instructions: {agents}")
+        else:
+            print(f"   instructions: {agents} (already configured)")
 PY
 fi
 
