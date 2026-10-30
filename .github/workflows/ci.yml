@@ -21,7 +21,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -58,7 +58,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
       - name: build
         env:
           TARGET: ${{ matrix.target }}
@@ -66,4 +66,4 @@ jobs:
           os="${TARGET%/*}"; arch="${TARGET#*/}"
           CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -o /tmp/agentbus .
       - name: smoke
-        run: /tmp/agentbus version
+        run: go version -m /tmp/agentbus | sed -n '1,3p'
