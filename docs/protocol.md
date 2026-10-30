@@ -48,7 +48,7 @@ agentbus serve [--detach] | stop
 | `SessionStart` | 注册（或幂等刷新）+ 取名册 | `hookSpecificOutput.additionalContext`：会话契约（primer）+ 名册 + 用法；`AGENTBUS_PRIMER=0` 时退化为最小名册 |
 | `UserPromptSubmit` | poll（ack） | 有消息 → `additionalContext`；无消息 → 空输出 |
 | `PostToolUse` | 同上 | 同上 |
-| `Stop` | 先 `poll(ack=false)` peek；仅有 `urgent` 时再 `poll(ack=true)` | 有 urgent → `{"decision":"block","reason":...}`；否则空输出（消息留到下一自然边界）。`AGENTBUS_WAKE=all` 时任意消息都唤醒 |
+| `Stop` | 先 `poll(ack=false)` peek；有 `urgent` 或**定向 request** 时再 `poll(ack=true)` | 命中 → `{"decision":"block","reason":...}`（reason 带每个 sender 的 reply 命令）；否则空输出（消息留到下一自然边界）。`AGENTBUS_WAKE=urgent` 退回仅 urgent，`all` 任意消息唤醒 |
 | `SessionEnd` | `leave`，静默 | 无 |
 
 任何异常都写 `$AGENTBUS_HOME/hook.log` 并以 0 退出，绝不打断宿主会话。
@@ -69,7 +69,7 @@ from, body, kind, reply_to, wait_ms, ack, n`。
 | `register` | `id, want, agent, cwd, branch, pid, pid_start` | 注册/刷新并分配名字 → `name`, `renamed_from` |
 | `announce` | `id, status` | 更新状态公告 |
 | `send` | `to, body, kind, reply_to`（`id` 或 `from`） | 投递 1 条；`to=user` 是虚拟人类收件人（只进日志/看板） → `messageId`, `recipients`, `dup` |
-| `ask` | `id, to, body, wait_ms` | 发 `request` 并阻塞等待对端回复 → `messages[0]`（已从收件箱取走） |
+| `ask` | `id, to, body, wait_ms` | 发**定向** `request`（目标空闲时 Stop 唤醒）并阻塞等待对端回复 → `messages[0]`（已从收件箱取走） |
 | `reply` | `id, body, to?` | 回复该会话**最近一条**对端消息（kind=reply，自动带 replyTo）→ `peer`, `messageId` |
 | `poll` | `id, ack, wait_ms` | 取收件箱；`ack=true` 消费并进入最近 5 条复读区 |
 | `mine` | `id` | 最近投递（供 `inbox --peek`） |
@@ -91,6 +91,7 @@ from, body, kind, reply_to, wait_ms, ack, n`。
   "from": "bob",
   "to": "hazel-yorkie",
   "kind": "request",
+  "recipients": 1,
   "body": "split files or tests?",
   "ts": 1730000000
 }
@@ -99,12 +100,13 @@ from, body, kind, reply_to, wait_ms, ack, n`。
 | kind | 语义 | 可唤醒空闲会话 |
 |---|---|---|
 | `chat`（默认） | 普通对话 | 否 |
-| `request` | 期待答复（`ask` 自动使用） | 否 |
+| `request` | 期待答复（`ask` 自动使用） | **定向：是**；广播：否 |
 | `reply` | 对某条消息的答复（带 `replyTo`） | 否 |
 | `notice` | 单向下行通知（`notify`） | 否 |
 | `urgent` | 人类中断 / 紧急协作 | **是** |
 
 广播：`to="all"`，除发送者外的所有在线会话各收一份（独立投递与 ack）。
+广播 request 不唤醒空闲会话；只有 `to=<本会话名>` 的定向 request 才唤醒。
 `to="user"` / `to="user-web"` 不是会话：消息进入全局日志与看板（人类可读），
 这样 agent 可以用 `agentbus reply --to user "..."` 回应人类的中断/提问，而不是
 广播。看板发出的广播使用 `user-web` 身份，同样可被回复。
@@ -123,8 +125,9 @@ PostToolUse 是 observation-only，不做 poll/ack。
 | 入口 | 说明 |
 |---|---|
 | `GET /` | 内嵌看板（相对路径，code-server `/proxy/8787/` 可用） |
-| `GET /api/state` | `{ok, version, uptime, now, web_identity, sessions[], messages[]}` |
-| `POST /api/send` | 请求 `{to, body, kind, from}` → `{ok, messageId, recipients, dup}` |
+| `GET /api/state` | `{ok, version, uptime, now, web_identity, sessions[], messages[], unread{msgId: [session]}}` |
+| `POST /api/send` | 请求 `{to, body, kind, from, replyTo?}` → `{ok, messageId, recipients, dup}` |
+| `POST /api/delete` | 请求 `{messageId}` → `{ok, deleted}`；仅当消息在至少一个收件箱中仍未读时允许，已读历史返回 409 |
 | `GET /.well-known/agent-card.json` | 根 Agent Card |
 | `GET /a2a/<name>/.well-known/agent-card.json` | 会话 Agent Card（404 = 无此在线会话） |
 | `POST /a2a/<name>` | A2A JSON-RPC `message/send`（见下） |
@@ -168,7 +171,7 @@ protocolVersion）、`ping`、`tools/list`、`tools/call`。工具：
 | `AGENTBUS_NAME` | 自动 | hook 注册的期望名字 |
 | `AGENTBUS_SESSION_ID` | 探测 | 身份覆盖 |
 | `AGENTBUS_PRIMER` | 开 | `0` = 不注入会话契约（省 token） |
-| `AGENTBUS_WAKE` | 仅 urgent | `all` = 任意消息都可 Stop 唤醒 |
+| `AGENTBUS_WAKE` | 默认 `request`：urgent + 定向 request | `urgent` = 仅 urgent；`all` = 任意消息都可 Stop 唤醒 |
 | `AGENTBUS_WEB` | 开 | `0` = 关闭看板/A2A |
 | `AGENTBUS_WEB_PORT` | `8787` | 看板端口 |
 | `AGENTBUS_WEB_TOKEN` | 空 | HTTP bearer token |

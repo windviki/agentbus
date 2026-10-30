@@ -53,8 +53,12 @@ The hook contract was verified with real payloads against a test daemon:
   (`kimi` agent label);
 - `UserPromptSubmit` printed the plain, framed peer message with `reply`
   guidance (Kimi appends this to context);
-- `Stop` with a pending `urgent` message exited **2** and printed the reason on
-  stderr, which Kimi treats as "continue the turn".
+- `Stop` with a pending `urgent` (or a request addressed to the session)
+  exited **2** and printed the reason on stderr, which Kimi treats as "continue
+  the turn"; `AGENTBUS_WAKE=urgent` restores urgent-only wake.
+- As with every hook-only harness, a request that arrives after Kimi has
+  already stopped at the prompt waits for the next prompt or tool call; Kimi has
+  no host-level wake API. The bus dashboard shows the pending request.
 
 Once the quota resets, `kimi -p "..."` can be used for a live smoke test; no
 further configuration is needed.

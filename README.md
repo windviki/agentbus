@@ -7,7 +7,8 @@
 **A local message bus for concurrent AI coding-agent sessions.** Sessions
 register under a unique name, publish what they're working on, and exchange
 messages to split work — automatically, across CLIs, with **zero token cost
-while idle**.
+while idle and nothing pending** (a directed request or urgent message may
+wake a session on purpose).
 
 ```text
 $ agentbus who
@@ -26,10 +27,12 @@ $ agentbus ask bob "starting tag-import refactor — does it overlap your filter
 you take the importer, I keep the filter UI — files don't overlap
 ```
 
-普通消息在 bob 的下一个工具调用时注入上下文；只有 **urgent** 会在 bob 空闲时
-经 Stop hook 立即唤醒（`decision:block`）。人类也可以打开看板
-`http://127.0.0.1:8787/`（code-server 下走 `/proxy/8787/`）看谁在线、直接发
-消息或点 ⚠ interrupt。
+普通消息在 bob 的下一个工具调用时注入上下文；**定向 `request`**（`ask` 默认
+发这种）会在 bob 空闲时经 Stop hook 唤醒并明确要求回一句，`urgent` 则用于真实
+中断。广播 request 不唤醒空闲会话，避免一条广播把所有人叫醒。人类也可以打开
+看板 `http://127.0.0.1:8787/`（code-server 下走 `/proxy/8787/`）：看谁在线、
+按 repo → worktree 分组、区分广播/单点消息，并直接看到还有哪些 request 在等回复；
+未读 pending 可逐条删除，底部另有独立的「收发日志」。
 
 ## 安装
 
@@ -48,7 +51,7 @@ git clone <this repo> && cd agentbus
 |---|---|---|
 | Claude Code | 插件包或 `--hooks` | [docs/integrations/claude-code.md](docs/integrations/claude-code.md) |
 | ZCode | 插件包或 `--hooks` | [docs/integrations/zcode.md](docs/integrations/zcode.md) |
-| DSH | 原生插件 | [docs/integrations/dsh.md](docs/integrations/dsh.md) |
+| DSH | 原生插件 | [docs/integrations/dsh.md](docs/integrations/dsh.md)（含 idle 轮询唤醒） |
 | Kimi Code | 插件/hook 脚本 + 全局 AGENTS.md | [docs/integrations/kimi.md](docs/integrations/kimi.md) |
 | 其他 | skill 或 MCP | [docs/integrations/generic.md](docs/integrations/generic.md) |
 
@@ -89,7 +92,7 @@ agent 会话 (claude code / zcode / dsh / ...)        人类 / 外部客户端
 | `SessionStart` | 刚启动 | 注册 + 注入会话契约与名册 |
 | `PostToolUse` | 工作中 | 有信则 `additionalContext` 注入，无信静默 |
 | `UserPromptSubmit` | 回合开始 | 同上（补齐错过的） |
-| `Stop` | 即将空闲 | 先 **peek**；仅当队列含 urgent 才 `decision:block` 唤醒，其余留到下一个自然边界 |
+| `Stop` | 即将空闲 | 先 **peek**；队列含 urgent 或**定向 request** 才 `decision:block` 唤醒并 flush，其余留到下一个自然边界 |
 | `SessionEnd` | 退出 | `leave`（ZCode 无此事件，靠 PID 回收） |
 
 **消息类型**（`send --kind`）：
@@ -97,13 +100,16 @@ agent 会话 (claude code / zcode / dsh / ...)        人类 / 外部客户端
 | kind | 语义 | 唤醒空闲会话 |
 |---|---|---|
 | `chat`（默认） | 普通对话 | 否 |
-| `request` | 期待答复（`ask` 自动使用） | 否 |
+| `request` | 期待答复（`ask` 自动使用；定向的会唤醒，广播的不会） | **定向：是** |
 | `reply` | 对某条消息的答复（`agentbus reply` 自动带 replyTo） | 否 |
 | `notice` | 单向下行通知（`notify`） | 否 |
-| `urgent` | 人类中断 / 紧急协作 | **是**（`AGENTBUS_WAKE=all` 可让任意消息唤醒） |
+| `urgent` | 人类中断 / 紧急协作 | **是**（`AGENTBUS_WAKE=all` 可让任意消息唤醒；`AGENTBUS_WAKE=urgent` 退回仅 urgent） |
 
 空闲且无消息时所有 hook 打印空串，host 不注入任何内容——这是 **0 token** 的
-来源。完整设计见 [docs/design.md](docs/design.md)，agent 采纳问题见
+来源；只有真的需要处理（urgent / 定向 request）才会花一次唤醒的开销。DSH 原生
+插件额外在 agent idle 时每 5s 走一次同一策略，命中就用 `agent.steer()` 开新回合
+（hook-only 的 ZCode / Claude Code 没有这个宿主 API）。完整设计见
+[docs/design.md](docs/design.md)，agent 采纳问题见
 [docs/adoption.md](docs/adoption.md)。
 
 ## 命令
@@ -115,7 +121,7 @@ agentbus who [-v|--json]             # 全部在线会话 + 状态
 agentbus peers [--cwd DIR]           # 同 worktree / 同 repo 的并行会话
 agentbus announce "doing X in wt-y"  # 发布状态
 agentbus send <name|all> "message"   # 发消息（--kind chat|request|reply|notice|urgent）
-agentbus ask <name> "question" [--wait 120]  # 请求-答复，阻塞并打印回答
+agentbus ask <name> "question" [--wait 120]  # 定向 request，唤醒空闲对端并等待回答
 agentbus reply "message" [--to bob]  # 回复最近一条对端消息
 agentbus notify <name|all> "info"    # 单向通知（不唤醒空闲会话）
 agentbus inbox [--wait 60] [--peek]  # 读消息（可长轮询；--peek 复读不消费）
@@ -135,7 +141,9 @@ flags 放在位置参数之前（Go flag 约定），例如
 ## Web 看板、A2A 与 MCP
 
 - 看板：`GET /`（相对路径，code-server 下 `/proxy/8787/` 直接可用）、
-  `GET /api/state`、`POST /api/send`；
+  `GET /api/state`、`POST /api/send`、`POST /api/delete`；按 repo → worktree
+  分组会话，区分 📢 广播与 🎯 单点消息，跟踪 request 的「待回复 / 已回复」
+  状态；未读 pending 可删除（仅未读，已读历史不可改写），底部独立展示收发日志；
 - A2A 子集：Agent Card + `POST /a2a/<name>` 的 JSON-RPC `message/send`；
 - MCP：`agentbus mcp`，暴露 who/announce/send/ask/inbox 五个工具。
 
@@ -152,7 +160,8 @@ flags 放在位置参数之前（Go flag 约定），例如
 | `AGENTBUS_NAME` | hook 注册时的期望名字 |
 | `AGENTBUS_SESSION_ID` | 身份覆盖（hook 外手动命令用） |
 | `AGENTBUS_PRIMER` | `0` = 不注入会话契约（省 token） |
-| `AGENTBUS_WAKE` | `all` = 任意消息都可 Stop 唤醒（默认仅 urgent） |
+| `AGENTBUS_WAKE` | 唤醒策略：默认 `request`（urgent + 定向 request）；`urgent` = 仅 urgent；`all` = 任意消息 |
+| `AGENTBUS_DSH_POLL_MS` | DSH 插件空闲唤醒轮询间隔（ms，默认 5000，0 关闭） |
 | `AGENTBUS_WEB` | `0` = 关闭看板/A2A |
 | `AGENTBUS_WEB_PORT` | 看板端口，默认 8787 |
 | `AGENTBUS_WEB_TOKEN` | 看板/A2A 的 bearer token（可选） |
@@ -173,8 +182,9 @@ flags 放在位置参数之前（Go flag 约定），例如
 
 ```bash
 go test ./...        # 单元测试（注册/投递/回收/持久化/限速/去重/kind/ask/reply）
-./test/e2e.sh        # 端到端：双会话 hook 全流程 + 投递梯子 + ask/notify/reply
-                     #        + Web API/页面 + A2A + MCP + 重启持久化
+./test/e2e.sh          # 端到端：双会话 hook 全流程 + 投递梯子 + ask/notify/reply
+                       #        + Web API/页面 + A2A + MCP + 重启持久化
+./test/dsh-idle-wake.sh # DSH 原生插件的空闲唤醒（mock agent，不花模型额度）
 ```
 
 互操作（真实 dsh ↔ claude）见 [docs/testing.md](docs/testing.md) §5。

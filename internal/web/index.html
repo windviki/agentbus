@@ -3,122 +3,350 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0f14'/%3E%3Cpath d='M8 11h16M8 16h10M8 21h13' stroke='%234da3ff' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 <title>agentbus</title>
 <style>
   :root {
-    --bg: #0e1116; --panel: #161b23; --panel2: #1c232e; --line: #26303d;
-    --fg: #dce3ec; --dim: #8a97a8; --acc: #4da3ff; --urgent: #ff5d5d;
-    --req: #ffb454; --notice: #7fd18a; --reply: #b18cff; --chat: #6b7887;
+    --bg: #0b0f14; --bg2: #0e141b; --panel: #141b24; --panel2: #19222d;
+    --panel3: #1f2a37; --line: #27323f; --line2: #32404f;
+    --fg: #dce6f2; --dim: #8998aa; --dim2: #64738a;
+    --acc: #4da3ff; --bc: #b18cff; --dm: #4da3ff; --ok: #7fd18a;
+    --req: #ffb454; --urgent: #ff6b6b; --reply: #b18cff; --notice: #7fd18a;
+    --chat: #76859a; --human: #7fd18a;
+    --shadow: 0 8px 28px rgba(0,0,0,.28);
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg);
-         font: 14px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
-  header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
-           padding: 14px 20px; border-bottom: 1px solid var(--line);
-           background: var(--panel); position: sticky; top: 0; z-index: 2; }
-  header h1 { font-size: 17px; margin: 0; letter-spacing: .5px; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background:
+      radial-gradient(1100px 500px at 85% -10%, rgba(77,163,255,.08), transparent 60%),
+      radial-gradient(900px 500px at 0% 0%, rgba(177,140,255,.06), transparent 55%),
+      var(--bg);
+    color: var(--fg); font: 13.5px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  button { font: inherit; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #2a3544; border-radius: 8px; border: 2px solid var(--bg); }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 11px 20px; border-bottom: 1px solid var(--line);
+    background: rgba(14,20,27,.92); backdrop-filter: blur(8px);
+    position: sticky; top: 0; z-index: 20;
+  }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: .6px; white-space: nowrap; }
   header h1 .bus { color: var(--acc); }
-  .meta { color: var(--dim); font-size: 12px; }
+  header h1 .tag { color: var(--dim2); font-size: 10px; letter-spacing: 1.5px; margin-left: 6px; }
+  .meta { color: var(--dim); font-size: 11.5px; white-space: nowrap; }
   .meta b { color: var(--fg); font-weight: 600; }
-  #identity { margin-left: auto; display: flex; gap: 6px; align-items: center;
-              color: var(--dim); font-size: 12px; }
-  #identity input { width: 110px; background: var(--panel2); color: var(--fg);
-                    border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
-  main { display: grid; grid-template-columns: 340px 1fr; gap: 14px;
-         padding: 14px 20px; max-width: 1400px; margin: 0 auto; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
-  section { background: var(--panel); border: 1px solid var(--line);
-            border-radius: 10px; overflow: hidden; }
-  section > h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
-                 color: var(--dim); margin: 0; padding: 10px 14px;
-                 border-bottom: 1px solid var(--line); }
-  .agent { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    background: rgba(255,180,84,.10); color: var(--req);
+    border: 1px solid rgba(255,180,84,.35); border-radius: 999px;
+    padding: 3px 11px; font-size: 11.5px;
+  }
+  .pill:hover { background: rgba(255,180,84,.18); }
+  .pill.hidden { display: none; }
+  .conn { margin-left: auto; color: var(--ok); font-size: 11px; white-space: nowrap; }
+  .conn.off { color: var(--urgent); }
+  #identity { display: flex; gap: 6px; align-items: center; color: var(--dim); font-size: 11.5px; }
+  #identity input {
+    width: 108px; background: var(--bg2); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 7px; padding: 4px 8px;
+  }
+  #identity input:focus { outline: none; border-color: var(--acc); }
+
+  main {
+    display: grid; grid-template-columns: 388px minmax(0, 1fr);
+    gap: 16px; padding: 16px 20px; max-width: 1500px; margin: 0 auto;
+  }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; overflow: hidden; box-shadow: var(--shadow);
+  }
+  .panel-head {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 14px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(255,255,255,.03), transparent);
+  }
+  .panel-head h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1.4px;
+    color: var(--dim); margin: 0; font-weight: 600;
+  }
+  .panel-head h2 .hint { text-transform: none; letter-spacing: 0; color: var(--dim2); font-weight: 400; margin-left: 7px; }
+  .roster-panel { display: flex; flex-direction: column; max-height: calc(100vh - 88px); }
+  #roster { overflow-y: auto; padding: 8px; }
+  .chat-panel { display: flex; flex-direction: column; height: calc(100vh - 88px); min-height: 560px; }
+  #feed { flex: 1; overflow-y: auto; }
+
+  /* ---- roster: workspace groups ---- */
+  .ws-group { margin-bottom: 8px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg2); }
+  .ws-group:last-child { margin-bottom: 0; }
+  .ws-head { padding: 8px 10px; background: var(--panel2); border-bottom: 1px solid var(--line); }
+  .ws-line1 { display: flex; align-items: baseline; gap: 7px; }
+  .ws-name { font-weight: 700; color: var(--fg); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ws-kind { font-size: 9.5px; color: var(--dim2); border: 1px solid var(--line2); border-radius: 999px; padding: 0 5px; letter-spacing: .5px; }
+  .ws-count { margin-left: auto; color: var(--dim); font-size: 10.5px; white-space: nowrap; }
+  .ws-path { color: var(--dim2); font-size: 10.5px; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ws-pending { color: var(--req); font-size: 10.5px; margin-left: 6px; }
+  .wt-head {
+    display: flex; align-items: baseline; gap: 7px; padding: 5px 10px 4px;
+    background: rgba(255,255,255,.018); border-bottom: 1px solid var(--line);
+    color: var(--dim); font-size: 10.5px;
+  }
+  .wt-branch { color: var(--acc); }
+  .wt-path { color: var(--dim2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent { padding: 9px 10px 9px 12px; border-bottom: 1px solid var(--line); position: relative; }
   .agent:last-child { border-bottom: none; }
-  .agent .top { display: flex; align-items: center; gap: 8px; }
-  .agent .name { font-weight: 700; color: var(--acc); cursor: pointer; }
-  .agent .agentlabel { color: var(--dim); font-size: 11px; border: 1px solid var(--line);
-                       padding: 1px 6px; border-radius: 999px; }
-  .agent .seen { margin-left: auto; color: var(--dim); font-size: 11px; }
-  .agent .status { color: var(--fg); margin: 4px 0 2px; font-size: 13px; }
-  .agent .where { color: var(--dim); font-size: 11px; word-break: break-all; }
-  .agent .actions { margin-top: 6px; display: flex; gap: 6px; }
-  .agent .actions button { background: var(--panel2); color: var(--fg);
-      border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px;
-      font: inherit; font-size: 12px; cursor: pointer; }
-  .agent .actions button:hover { border-color: var(--acc); color: var(--acc); }
-  .agent .actions button.warn:hover { border-color: var(--urgent); color: var(--urgent); }
-  #feed { max-height: 72vh; overflow-y: auto; }
-  .msg { padding: 10px 14px; border-bottom: 1px solid var(--line); }
-  .msg .line1 { display: flex; gap: 8px; align-items: baseline; font-size: 12px;
-                color: var(--dim); flex-wrap: wrap; }
-  .msg .from { color: var(--acc); cursor: pointer; font-weight: 600; }
-  .msg .to { color: var(--dim); }
-  .badge { font-size: 10px; padding: 1px 7px; border-radius: 999px;
-           border: 1px solid currentColor; text-transform: uppercase; letter-spacing: .5px; }
+  .agent:hover { background: rgba(77,163,255,.045); }
+  .agent.has-pending { background: rgba(255,180,84,.06); }
+  .agent.has-pending:hover { background: rgba(255,180,84,.10); }
+  .agent-top { display: flex; align-items: center; gap: 7px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #7c8da3; flex: 0 0 auto; box-shadow: 0 0 0 3px rgba(255,255,255,.03); }
+  .dot.dsh { background: #4da3ff; } .dot.zcode { background: #ffb454; }
+  .dot.claude-code { background: #d97757; } .dot.kimi { background: #7fd18a; }
+  .dot.opencode { background: #e879f9; }
+  .agent .name {
+    background: none; border: 0; padding: 0; color: var(--acc); font-weight: 700;
+    font-size: 13px; cursor: pointer; text-align: left;
+  }
+  .agent .name:hover { text-decoration: underline; }
+  .agentlabel { color: var(--dim); font-size: 9.5px; border: 1px solid var(--line2); padding: 0 6px; border-radius: 999px; }
+  .seen { margin-left: auto; color: var(--dim2); font-size: 10.5px; white-space: nowrap; }
+  .pending-chip {
+    color: var(--req); border: 1px solid rgba(255,180,84,.4); background: rgba(255,180,84,.1);
+    border-radius: 999px; padding: 0 6px; font-size: 10px; white-space: nowrap;
+  }
+  .agent .status {
+    color: var(--fg); margin: 3px 0 1px; font-size: 12px; overflow-wrap: anywhere;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .agent .status.empty { color: var(--dim2); font-style: italic; }
+  .agent .where { color: var(--dim2); font-size: 10.5px; overflow-wrap: anywhere; }
+  .agent-actions { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .btn {
+    background: var(--panel3); color: var(--fg); border: 1px solid var(--line2);
+    border-radius: 6px; padding: 2px 9px; font-size: 11px; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--acc); color: var(--acc); }
+  .btn.req:hover { border-color: var(--req); color: var(--req); }
+  .btn.warn:hover { border-color: var(--urgent); color: var(--urgent); }
+  .btn:disabled { opacity: .5; cursor: wait; }
+
+  /* ---- feed ---- */
+  .filters { display: flex; gap: 5px; flex-wrap: wrap; margin-left: auto; }
+  .filters button {
+    background: transparent; color: var(--dim); border: 1px solid var(--line);
+    border-radius: 999px; padding: 2px 9px; cursor: pointer; font-size: 10.5px;
+  }
+  .filters button b { font-weight: 600; color: var(--fg); margin-left: 3px; }
+  .filters button:hover { border-color: var(--line2); color: var(--fg); }
+  .filters button.on { background: rgba(77,163,255,.12); border-color: rgba(77,163,255,.5); color: var(--acc); }
+  .filters button.on b { color: var(--acc); }
+  .msg {
+    position: relative; padding: 9px 14px 9px 13px;
+    border-bottom: 1px solid var(--line); border-left: 3px solid transparent;
+  }
+  .msg:hover { background: rgba(255,255,255,.018); }
+  .msg.broadcast { border-left-color: var(--bc); }
+  .msg.direct { border-left-color: var(--dm); }
+  .msg.pending { background: rgba(255,180,84,.055); }
+  .msg.pending:hover { background: rgba(255,180,84,.08); }
+  .msg-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 11px; color: var(--dim); }
+  .aud { font-size: 9.5px; letter-spacing: .4px; border-radius: 999px; padding: 1px 7px; white-space: nowrap; border: 1px solid currentColor; }
+  .aud.broadcast { color: var(--bc); background: rgba(177,140,255,.09); }
+  .aud.direct { color: var(--dm); background: rgba(77,163,255,.09); }
+  .from { color: var(--acc); font-weight: 700; font-size: 12px; background: none; border: 0; padding: 0; cursor: pointer; }
+  .from:hover { text-decoration: underline; }
+  .from.human { color: var(--human); }
+  .ws-chip { color: var(--dim2); font-size: 10px; border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; white-space: nowrap; }
+  .arrow { color: var(--dim2); }
+  .to { color: var(--fg); }
+  .to.all { color: var(--bc); }
+  .badge {
+    font-size: 9.5px; padding: 0 7px; border-radius: 999px; border: 1px solid currentColor;
+    text-transform: uppercase; letter-spacing: .5px; white-space: nowrap;
+  }
   .badge.chat { color: var(--chat); } .badge.request { color: var(--req); }
   .badge.reply { color: var(--reply); } .badge.notice { color: var(--notice); }
   .badge.urgent { color: var(--urgent); font-weight: 700; }
-  .msg .time { margin-left: auto; }
-  .msg .body { margin-top: 3px; white-space: pre-wrap; word-break: break-word; }
-  .msg .re { color: var(--reply); font-size: 11px; }
-  .empty { color: var(--dim); padding: 20px; text-align: center; }
-  #composer { position: sticky; bottom: 0; background: var(--panel2);
-              border-top: 1px solid var(--line); padding: 10px 14px; display:
-              grid; grid-template-columns: 140px 110px 1fr auto; gap: 8px; }
-  #composer select, #composer textarea, #composer button {
-      background: var(--bg); color: var(--fg); border: 1px solid var(--line);
-      border-radius: 6px; padding: 6px 8px; font: inherit; }
-  #composer textarea { resize: vertical; min-height: 38px; max-height: 140px; }
-  #composer button { background: var(--acc); color: #08121f; font-weight: 700;
-                     border: none; padding: 6px 16px; cursor: pointer; }
-  #composer button:disabled { opacity: .5; cursor: wait; }
-  #note { padding: 6px 14px; color: var(--dim); font-size: 11px; }
+  .reqstate { font-size: 10px; white-space: nowrap; }
+  .reqstate.wait { color: var(--req); }
+  .reqstate.ok { color: var(--ok); }
+  .reqstate.none { color: var(--dim2); }
+  .reqstate button { background: none; border: 0; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; padding: 0; }
+  .msg .time { margin-left: auto; color: var(--dim2); font-size: 10.5px; white-space: nowrap; }
+  .msg-body { margin-top: 3px; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; font-size: 13px; }
+  .msg-foot { margin-top: 3px; color: var(--dim2); font-size: 10.5px; }
+  .msg-foot .re { color: var(--reply); }
+  .msg-actions {
+    position: absolute; top: 7px; right: 10px; display: flex; gap: 5px;
+    opacity: 0; transition: opacity .12s; background: linear-gradient(90deg, transparent, var(--panel) 30%);
+    padding-left: 18px;
+  }
+  .msg:hover .msg-actions, .msg:focus-within .msg-actions { opacity: 1; }
+  .msg-actions button {
+    background: var(--panel3); border: 1px solid var(--line2); color: var(--dim);
+    border-radius: 5px; padding: 0 6px; font-size: 10px; cursor: pointer;
+  }
+  .msg-actions button:hover { color: var(--acc); border-color: var(--acc); }
+  .empty { color: var(--dim2); padding: 26px 20px; text-align: center; font-size: 12px; }
+  .empty small { display: block; margin-top: 5px; color: var(--dim2); }
+
+  /* ---- composer ---- */
+  #composer { border-top: 1px solid var(--line); background: var(--panel2); padding: 9px 12px 10px; }
+  .composer-row { display: flex; gap: 8px; }
+  .composer-row > * { min-width: 0; }
+  #target { flex: 1 1 60%; } #kind { flex: 0 1 40%; }
+  #composer select, #composer textarea {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--line2);
+    border-radius: 7px; padding: 6px 8px; font: inherit; font-size: 12px;
+  }
+  #composer select:focus, #composer textarea:focus { outline: none; border-color: var(--acc); }
+  .main-row { margin-top: 7px; align-items: stretch; }
+  #body { flex: 1; resize: vertical; min-height: 40px; max-height: 150px; }
+  #send {
+    background: var(--acc); color: #07121f; font-weight: 700; border: none;
+    border-radius: 7px; padding: 0 20px; cursor: pointer; white-space: nowrap;
+  }
+  #send:hover { filter: brightness(1.08); }
+  #send:disabled { opacity: .5; cursor: wait; }
+  .hintline { color: var(--dim2); font-size: 10.5px; margin-top: 6px; min-height: 14px; }
+  .note { font-size: 10.5px; margin-top: 2px; min-height: 14px; color: var(--dim); }
+  .note.ok { color: var(--ok); } .note.err { color: var(--urgent); }
+  .replybar {
+    display: flex; align-items: center; gap: 8px; margin-top: 7px;
+    background: rgba(177,140,255,.1); border: 1px solid rgba(177,140,255,.35);
+    color: var(--reply); border-radius: 7px; padding: 3px 8px; font-size: 10.5px;
+  }
+  .replybar.hidden { display: none; }
+  .replybar button { margin-left: auto; background: none; border: 0; color: var(--reply); cursor: pointer; font-size: 14px; line-height: 1; }
+
+  /* ---- bottom traffic log (independent from the message reader) ---- */
+  .traf-panel {
+    flex: 0 0 auto; display: flex; flex-direction: column;
+    border-top: 1px solid var(--line); background: var(--bg2); max-height: 224px;
+  }
+  .traf-head { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
+  .traf-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--dim); font-weight: 600; }
+  .traf-meta { margin-left: auto; color: var(--dim2); font-size: 10.5px; white-space: nowrap; }
+  .traf-toggle {
+    background: none; border: 1px solid var(--line); color: var(--dim);
+    border-radius: 5px; padding: 0 7px; font-size: 10px; cursor: pointer;
+  }
+  .traf-toggle:hover { color: var(--acc); border-color: var(--acc); }
+  .traf-body { overflow-y: auto; max-height: 190px; }
+  .traf-panel.collapsed .traf-body { display: none; }
+  .tline {
+    display: flex; align-items: baseline; gap: 6px; padding: 3px 12px;
+    border-bottom: 1px solid rgba(39,50,63,.55); font-size: 10.5px; color: var(--dim);
+    white-space: nowrap;
+  }
+  .tline:last-child { border-bottom: none; }
+  .tline:hover { background: rgba(255,255,255,.02); }
+  .tline.out { background: rgba(77,163,255,.028); }
+  .tline.broadcast { border-left: 2px solid rgba(177,140,255,.5); padding-left: 10px; }
+  .tline.direct { border-left: 2px solid rgba(77,163,255,.35); padding-left: 10px; }
+  .tline .tdir { width: 12px; flex: 0 0 auto; color: var(--dim2); }
+  .tline.out .tdir { color: var(--dm); }
+  .tline .ttime { flex: 0 0 auto; color: var(--dim2); }
+  .tline .tfrom { flex: 0 0 auto; max-width: 138px; overflow: hidden; text-overflow: ellipsis; color: var(--acc); }
+  .tline.out .tfrom { color: var(--human); }
+  .tline .tarrow { flex: 0 0 auto; color: var(--dim2); }
+  .tline .tto { flex: 0 0 auto; max-width: 138px; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
+  .tline .tbody { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
+  .tline .tstate { flex: 0 0 auto; color: var(--dim2); }
+  .tline .tstate.unread { color: var(--req); }
+  .tline .tstate.req { color: var(--req); }
+  .tline button.tdel {
+    flex: 0 0 auto; background: none; border: 0; padding: 0 2px;
+    color: var(--dim2); cursor: pointer; font-size: 11px; line-height: 1;
+  }
+  .tline button.tdel:hover { color: var(--urgent); }
+  .reqstate button.delmsg {
+    background: none; border: 0; color: var(--dim2); cursor: pointer;
+    font: inherit; font-size: 10px; padding: 0 2px; text-decoration: none; margin-left: 2px;
+  }
+  .reqstate button.delmsg:hover { color: var(--urgent); }
+
+  @media (max-width: 980px) {
+    main { grid-template-columns: 1fr; }
+    .roster-panel { max-height: 46vh; }
+    .chat-panel { height: auto; min-height: 60vh; }
+    #feed { max-height: 52vh; }
+    .traf-panel { max-height: 30vh; }
+    .traf-body { max-height: 24vh; }
+    header { gap: 10px; }
+    .conn { margin-left: 0; }
+  }
 </style>
 </head>
 <body>
 <header>
-  <h1><span class="bus">⌘</span> agentbus</h1>
-  <span class="meta">up <b id="uptime">–</b> · <b id="nsess">0</b> session(s) · <b id="nmsg">0</b> msg</span>
-  <span class="meta" id="proxhint"></span>
+  <h1><span class="bus">⌘</span> agentbus <span class="tag">LOCAL BUS</span></h1>
+  <span class="meta">up <b id="uptime">–</b> · <b id="nsess">0</b> 会话 · <b id="nws">0</b> 工作区 · <b id="nmsg">0</b> 消息</span>
+  <button id="pendingpill" class="pill hidden" title="单点 request 还没有收到回复">⏳ <b id="npending">0</b> 待回复</button>
+  <span id="conn" class="conn" title="实时连接">● live</span>
   <label id="identity">身份
     <input id="ident" value="user-web" spellcheck="false">
   </label>
 </header>
 <main>
-  <section>
-    <h2>Live sessions</h2>
+  <section class="panel roster-panel">
+    <div class="panel-head">
+      <h2>工作区 <span class="hint">repo → worktree</span></h2>
+    </div>
     <div id="roster"><div class="empty">…</div></div>
   </section>
-  <section>
-    <h2>Conversation</h2>
+  <section class="panel chat-panel">
+    <div class="panel-head">
+      <h2>消息阅读 <span class="hint">广播 = 所有会话 · 单点 = 一个会话 · 最新在上</span></h2>
+      <div id="filters" class="filters">
+        <button data-filter="all" class="on">全部 <b>0</b></button>
+        <button data-filter="broadcast">📢 广播 <b>0</b></button>
+        <button data-filter="direct">🎯 单点 <b>0</b></button>
+        <button data-filter="pending">⏳ 待回复 <b>0</b></button>
+      </div>
+    </div>
     <div id="feed"><div class="empty">…</div></div>
     <div id="composer">
-      <select id="target"><option value="all">▷ broadcast (all)</option></select>
-      <select id="kind">
-        <option value="chat">chat</option>
-        <option value="request">request</option>
-        <option value="reply">reply</option>
-        <option value="notice">notice</option>
-        <option value="urgent">urgent</option>
-      </select>
-      <textarea id="body" placeholder="给 agent 发消息（urgent 会立即唤醒空闲会话）…" rows="1"></textarea>
-      <button id="send">send</button>
+      <div class="composer-row">
+        <select id="target" title="收件人"></select>
+        <select id="kind" title="消息类型">
+          <option value="chat">chat · 普通消息</option>
+          <option value="request">request · 请求回复</option>
+          <option value="reply">reply · 回复</option>
+          <option value="notice">notice · 单向通知</option>
+          <option value="urgent">urgent · ⚠ 紧急中断</option>
+        </select>
+      </div>
+      <div id="replybar" class="replybar hidden">
+        <span id="replylabel">↩</span>
+        <button id="replyclear" type="button" title="取消回复">×</button>
+      </div>
+      <div class="composer-row main-row">
+        <textarea id="body" placeholder="给 agent 发消息…  （Ctrl/⌘+Enter 发送）" rows="2"></textarea>
+        <button id="send">发送</button>
+      </div>
+      <div id="hint" class="hintline"></div>
+      <div id="note" class="note"></div>
     </div>
-    <div id="note"></div>
+    <div id="trafPanel" class="traf-panel">
+      <div class="traf-head">
+        <span class="traf-title">收发日志</span>
+        <span id="trafMeta" class="traf-meta">…</span>
+        <button id="trafToggle" class="traf-toggle" type="button" title="收起/展开收发日志">收起</button>
+      </div>
+      <div id="traffic" class="traf-body"></div>
+    </div>
   </section>
 </main>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-const esc = (s) => { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; };
-const ago = (ts, now) => {
-  const s = Math.max(0, now - ts);
-  if (s < 60) return "<1m"; if (s < 3600) return Math.floor(s/60) + "m";
-  if (s < 86400) return Math.floor(s/3600) + "h"; return Math.floor(s/86400) + "d";
-};
-const fmtUptime = (s) => s < 60 ? s + "s" : s < 3600 ? Math.floor(s/60) + "m" :
-  s < 86400 ? Math.floor(s/3600) + "h" + Math.floor(s%3600/60) + "m" : Math.floor(s/86400) + "d";
-const hhmm = (ts) => new Date(ts * 1000).toTimeString().slice(0, 5);
+const esc = (s) => { const d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; };
+const escA = (s) => esc(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
 // Optional bearer token: pass ?token=xxx once (kept for the session).
 let token = null;
@@ -130,94 +358,633 @@ const headers = { "Content-Type": "application/json" };
 if (token) headers["X-Agentbus-Token"] = token;
 
 async function api(path, opts) {
-  const r = await fetch("./api/" + path, Object.assign({ headers }, opts));
-  if (r.status === 401) { $("note").textContent = "unauthorized: append ?token=<AGENTBUS_WEB_TOKEN> to the URL"; throw new Error("unauth"); }
+  const r = await fetch("./api/" + path, Object.assign({ headers, cache: "no-store" }, opts));
+  if (r.status === 401) {
+    setNote("unauthorized: append ?token=<AGENTBUS_WEB_TOKEN> to the URL", false);
+    throw new Error("unauth");
+  }
   return r.json();
 }
 
 let state = { sessions: [], messages: [], now: 0, uptime: 0 };
+let filter = "all";
 let selected = "all";
+let replyTo = null;          // request messageId being answered
+let replyFrom = "";          // peer being answered
+let liveByName = new Map();
+let repliesById = new Map(); // requestId -> [reply Msg]
+let requestById = new Map(); // request messageId -> request Msg
+let pendingDirect = [];      // direct requests owed by a live agent session
+let pendingHuman = [];       // direct requests addressed to the human side
+let pendingBySession = new Map();
+let unreadByMsg = new Map(); // messageId -> [sessionName...] still unread
+let groups = [];
+let deleting = new Set();
+let trafficInit = false;
+let trafficCollapsed = false;
+let targetSig = "";
+let sending = false;
+
+const isHuman = (name) => name === "user" || name === "user-web";
+const isHumanTarget = (m) => m.to === "user" || m.to === "user-web";
+const humanName = (name) => name === "user-web" ? "人类 (user-web)" : name === "user" ? "人类" : name;
+const agentClass = (a) => ({ dsh: "dsh", zcode: "zcode", "claude-code": "claude-code", kimi: "kimi", opencode: "opencode" }[a] || "other");
+
+const ago = (ts, now) => {
+  const s = Math.max(0, now - ts);
+  if (s < 60) return "<1m";
+  if (s < 3600) return Math.floor(s / 60) + "m";
+  if (s < 86400) return Math.floor(s / 3600) + "h";
+  return Math.floor(s / 86400) + "d";
+};
+const fmtUptime = (s) => s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" :
+  s < 86400 ? Math.floor(s / 3600) + "h" + Math.floor(s % 3600 / 60) + "m" : Math.floor(s / 86400) + "d";
+const pad2 = (n) => String(n).padStart(2, "0");
+const fmtTime = (ts) => {
+  const d = new Date(ts * 1000), now = new Date(state.now ? state.now * 1000 : Date.now());
+  const hm = pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+  return d.toDateString() === now.toDateString() ? hm : (d.getMonth() + 1) + "-" + pad2(d.getDate()) + " " + hm;
+};
+const stripGit = (p) => (p || "").replace(/\/\.git\/?$/, "").replace(/\.git\/?$/, "");
+const shortPath = (p) => {
+  if (!p) return "";
+  let s = String(p).replace(/\/+$/, "");
+  s = s.replace(/^\/home\/[^/]+/, "~").replace(/^\/Users\/[^/]+/, "~").replace(/^\/root/, "~");
+  return s;
+};
+const baseName = (p) => {
+  const s = stripGit(p).replace(/\/+$/, "");
+  return s.split("/").pop() || s;
+};
+const wsOf = (s) => {
+  const repo = s.repo ? stripGit(s.repo) : "";
+  const cwd = s.cwd || "";
+  const path = repo || cwd;
+  return {
+    key: repo || (cwd ? "cwd:" + cwd : "unknown"),
+    path, repo, label: baseName(path) || "未归类",
+  };
+};
+
+function unreadCount(m) {
+  return (unreadByMsg.get(m.messageId) || []).length;
+}
+
+function analyze() {
+  liveByName = new Map(state.sessions.map((s) => [s.name, s]));
+  unreadByMsg = new Map(Object.entries(state.unread || {}));
+  requestById = new Map();
+  for (const m of state.messages) {
+    if (m.kind === "request") requestById.set(m.messageId, m);
+  }
+  repliesById = new Map();
+  for (const m of state.messages) {
+    if (!m.replyTo) continue;
+    const req = requestById.get(m.replyTo);
+    if (!req) continue;
+    // Only the intended recipient answers a direct request. A human replying
+    // to the requester (the hover "reply" action on a peer→peer request) is a
+    // separate conversation and must not clear the pending flag.
+    // For a request addressed to the human side, any reply that is not the
+    // requester echoes back counts (the dashboard identity is configurable).
+    const answers = req.to === "all" || (isHumanTarget(req) ? m.from !== req.from : m.from === req.to);
+    if (!answers) continue;
+    const arr = repliesById.get(m.replyTo) || [];
+    arr.push(m);
+    repliesById.set(m.replyTo, arr);
+  }
+  pendingDirect = state.messages.filter((m) =>
+    m.kind === "request" && m.to !== "all" && !isHumanTarget(m) &&
+    !(repliesById.get(m.messageId) || []).length && liveByName.has(m.to));
+  pendingHuman = state.messages.filter((m) =>
+    m.kind === "request" && isHumanTarget(m) && !isHuman(m.from) &&
+    !(repliesById.get(m.messageId) || []).length);
+  pendingBySession = new Map();
+  for (const m of pendingDirect) pendingBySession.set(m.to, (pendingBySession.get(m.to) || 0) + 1);
+
+  // A session registered before workspace discovery may have no repo field.
+  // If another session in the exact same cwd knows the repo, fold the older
+  // one into that workspace instead of showing a duplicate "dir" group.
+  const repoByCwd = new Map();
+  for (const s of state.sessions) {
+    if (s.repo && s.cwd) repoByCwd.set(s.cwd, stripGit(s.repo));
+  }
+  const byKey = new Map();
+  for (const s of state.sessions) {
+    const w = wsOf(s);
+    if (!w.repo) {
+      const fallback = repoByCwd.get(s.cwd || "");
+      if (fallback) {
+        w.repo = fallback;
+        w.path = fallback;
+        w.key = fallback;
+        w.label = baseName(fallback) || "未归类";
+      }
+    }
+    let g = byKey.get(w.key);
+    if (!g) {
+      g = { key: w.key, path: w.path, repo: w.repo, label: w.label, sessions: [], worktrees: new Map() };
+      byKey.set(w.key, g);
+    }
+    g.sessions.push(s);
+    const cwd = s.cwd || "";
+    let wt = g.worktrees.get(cwd || "(unknown)");
+    if (!wt) {
+      wt = { cwd, branch: s.branch || "", sessions: [] };
+      g.worktrees.set(cwd || "(unknown)", wt);
+    }
+    wt.sessions.push(s);
+  }
+  groups = [...byKey.values()];
+  for (const g of groups) {
+    g.wts = [...g.worktrees.values()].sort((a, b) => (a.cwd || "").localeCompare(b.cwd || ""));
+    g.pending = g.sessions.reduce((n, s) => n + (pendingBySession.get(s.name) || 0), 0);
+    g.sessions.sort((a, b) =>
+      (pendingBySession.get(b.name) || 0) - (pendingBySession.get(a.name) || 0) || a.name.localeCompare(b.name));
+  }
+  groups.sort((a, b) => (b.pending || 0) - (a.pending || 0) || a.label.localeCompare(b.label) || a.path.localeCompare(b.path));
+}
+
+function renderHeader() {
+  const nws = groups.length;
+  $("uptime").textContent = fmtUptime(state.uptime || 0);
+  $("nsess").textContent = state.sessions.length;
+  $("nws").textContent = nws;
+  $("nmsg").textContent = state.messages.length;
+  const pendingTotal = pendingDirect.length + pendingHuman.length;
+  const unreadPending = pendingDirect.filter((m) => unreadCount(m) > 0).length;
+  $("pendingpill").innerHTML = `⏳ <b>${pendingTotal}</b> 待回复` +
+    (unreadPending ? ` · <b>${unreadPending}</b> 未读` : "");
+  $("pendingpill").title = `${pendingDirect.length} 个单点 request 等待 agent 回复（其中 ${unreadPending} 个未读）· ${pendingHuman.length} 个等待你回复`;
+  $("pendingpill").classList.toggle("hidden", pendingTotal === 0);
+  document.title = "agentbus" + (pendingTotal ? " · " + pendingTotal + " 待回复" : "");
+}
 
 function renderRoster() {
   const el = $("roster");
-  if (!state.sessions.length) { el.innerHTML = '<div class="empty">no live agent sessions</div>'; return; }
-  el.innerHTML = state.sessions.map(s => `
-    <div class="agent">
-      <div class="top">
-        <span class="name" data-to="${esc(s.name)}">${esc(s.name)}</span>
+  if (!state.sessions.length) {
+    el.innerHTML = '<div class="empty">没有在线会话<small>启动一个 agent 会话后会自动注册</small></div>';
+    return;
+  }
+  el.innerHTML = groups.map((g) => {
+    const pending = g.pending ? `<span class="ws-pending">⏳ ${g.pending}</span>` : "";
+    const wtPath = g.wts.length === 1 && g.repo && g.wts[0].cwd && shortPath(g.wts[0].cwd) !== shortPath(g.repo)
+      ? ` · wt ${esc(shortPath(g.wts[0].cwd))}` : "";
+    let body = "";
+    if (g.wts.length > 1) {
+      body = g.wts.map((wt) => `
+        <div class="wt-head"><span class="wt-branch">${esc(wt.branch || "HEAD")}</span><span class="wt-path">${esc(shortPath(wt.cwd))}</span></div>
+        ${wt.sessions.map((s) => agentCard(s)).join("")}`).join("");
+    } else {
+      body = g.sessions.map((s) => agentCard(s)).join("");
+    }
+    return `
+      <div class="ws-group">
+        <div class="ws-head">
+          <div class="ws-line1">
+            <span class="ws-name">⌂ ${esc(g.label)}</span>
+            <span class="ws-kind">${g.repo ? "repo" : "dir"}</span>
+            ${pending}
+            <span class="ws-count">${g.sessions.length} 会话${g.wts.length > 1 ? " · " + g.wts.length + " worktrees" : ""}</span>
+          </div>
+          <div class="ws-path">${esc(shortPath(g.repo || g.path))}${wtPath}</div>
+        </div>
+        ${body}
+      </div>`;
+  }).join("");
+}
+
+function agentCard(s) {
+  const pending = pendingBySession.get(s.name) || 0;
+  const branch = s.branch && s.branch !== "HEAD" ? s.branch : "";
+  const where = [branch, s.pid ? "pid " + s.pid : ""].filter(Boolean).join(" · ");
+  const status = s.status
+    ? `<div class="status" title="${escA(s.status)}">${esc(s.status)}</div>`
+    : '<div class="status empty">（无状态公告）</div>';
+  const pendingTitle = pending
+    ? "待回复的 request：" + pendingDirect.filter((m) => m.to === s.name).map((m) => m.from).join(", ")
+    : "";
+  return `
+    <div class="agent${pending ? " has-pending" : ""}">
+      <div class="agent-top">
+        <span class="dot ${agentClass(s.agent)}"></span>
+        <button class="name" data-act="compose" data-name="${escA(s.name)}" data-kind="chat" title="单点消息 ${escA(s.name)}">${esc(s.name)}</button>
         <span class="agentlabel">${esc(s.agent || "?")}</span>
-        <span class="seen">${esc(ago(s.last_seen, state.now))} ago</span>
+        ${pending ? `<span class="pending-chip" title="${escA(pendingTitle)}">⏳ ${pending} 待回复</span>` : ""}
+        <span class="seen" title="最后活动">${esc(ago(s.last_seen, state.now))} ago</span>
       </div>
-      <div class="status">${esc(s.status || "")}</div>
-      <div class="where">${esc(s.cwd || "")}${s.branch && s.branch !== "HEAD" ? "@" + esc(s.branch) : ""}${s.pid ? " · pid " + s.pid : ""}</div>
-      <div class="actions">
-        <button data-msg="${esc(s.name)}">message</button>
-        <button class="warn" data-urgent="${esc(s.name)}">⚠ interrupt</button>
+      ${status}
+      ${where ? `<div class="where">${esc(where)}</div>` : ""}
+      <div class="agent-actions">
+        <button class="btn" data-act="compose" data-name="${escA(s.name)}" data-kind="chat">消息</button>
+        <button class="btn req" data-act="compose" data-name="${escA(s.name)}" data-kind="request" title="定向 request 会唤醒空闲会话并要求回复">请求</button>
+        <button class="btn warn" data-act="compose" data-name="${escA(s.name)}" data-kind="urgent" title="立即中断该会话，慎用">⚠ 中断</button>
       </div>
-    </div>`).join("");
-  el.querySelectorAll("[data-msg]").forEach(b => b.onclick = () => compose(b.dataset.msg, "chat"));
-  el.querySelectorAll("[data-urgent]").forEach(b => b.onclick = () => compose(b.dataset.urgent, "urgent"));
-  el.querySelectorAll("[data-to]").forEach(n => n.onclick = () => compose(n.dataset.to, "chat"));
-  const t = $("target");
-  const names = state.sessions.map(s => s.name);
-  t.innerHTML = '<option value="all">▷ broadcast (all)</option>' +
-    names.map(n => `<option${n === selected ? " selected" : ""}>${esc(n)}</option>`).join("");
+    </div>`;
+}
+
+function renderTargets() {
+  const sig = JSON.stringify(groups.map((g) => [
+    g.key, g.label, g.path, g.wts.map((w) => [w.cwd, w.branch]),
+    g.sessions.map((s) => [s.name, s.agent, s.branch, pendingBySession.get(s.name) || 0]),
+  ]));
+  const sel = $("target");
+  if (sig !== targetSig) {
+    targetSig = sig;
+    const names = new Set(state.sessions.map((s) => s.name));
+    let html = `<optgroup label="📢 广播"><option value="all">📢 广播 · 所有在线会话（${state.sessions.length}）</option></optgroup>`;
+    if (selected !== "all" && !names.has(selected)) {
+      html = `<option value="${escA(selected)}" selected>⚠ 已离线：${esc(selected)}</option>` + html;
+    }
+    for (const g of groups) {
+      html += `<optgroup label="⌂ ${escA(g.label)} · ${escA(shortPath(g.path))}">`;
+      for (const s of g.sessions) {
+        const p = pendingBySession.get(s.name) || 0;
+        const b = s.branch && s.branch !== "HEAD" ? " · " + s.branch : "";
+        html += `<option value="${escA(s.name)}"${s.name === selected ? " selected" : ""}>${esc(s.name)} · ${esc(s.agent || "?")}${esc(b)}${p ? " · ⏳" + p : ""}</option>`;
+      }
+      html += "</optgroup>";
+    }
+    sel.innerHTML = html;
+  }
+  if (selected === "all" || liveByName.has(selected)) sel.value = selected;
+}
+
+function msgAudience(m) {
+  if (m.to === "all") return { cls: "broadcast", label: "📢 广播", n: m.recipients };
+  return { cls: "direct", label: "🎯 单点", n: 0 };
+}
+
+function reqState(m) {
+  if (m.kind !== "request") return "";
+  const replies = repliesById.get(m.messageId) || [];
+  const unread = unreadCount(m);
+  const unreadTag = unread ? ` · 未读 ${unread}` : "";
+  const del = unread
+    ? ` <button class="delmsg" data-act="delete" data-id="${escA(m.messageId)}" title="删除未读 pending 消息">✕</button>` : "";
+  if (replies.length) return `<span class="reqstate ok">✓ 已回复${replies.length > 1 ? " ×" + replies.length : ""}</span>`;
+  if (m.to === "all") return `<span class="reqstate none">0 回复${unreadTag}${del}</span>`;
+  if (isHumanTarget(m)) {
+    if (liveByName.has(m.from)) {
+      return `<span class="reqstate wait">⏳ 待你回复 <button data-act="reply" data-id="${escA(m.messageId)}" data-from="${escA(m.from)}">回复</button></span>`;
+    }
+    return '<span class="reqstate none">⏳ 未回复</span>';
+  }
+  if (liveByName.has(m.to)) {
+    if (!unread) return '<span class="reqstate wait">⏳ 待回复 · 已读未回</span>';
+    return `<span class="reqstate wait">⏳ 待回复${unreadTag}${del}</span>`;
+  }
+  return '<span class="reqstate none">⏳ 未回复</span>';
+}
+
+function isPendingReq(m) {
+  if (m.kind !== "request" || m.to === "all" || (repliesById.get(m.messageId) || []).length) return false;
+  if (isHumanTarget(m)) return !isHuman(m.from);
+  return liveByName.has(m.to);
 }
 
 function renderFeed() {
   const el = $("feed");
-  if (!state.messages.length) { el.innerHTML = '<div class="empty">no messages yet</div>'; return; }
-  el.innerHTML = state.messages.map(m => `
-    <div class="msg">
-      <div class="line1">
-        <span class="from" data-to="${esc(m.from)}">${esc(m.from)}</span>
-        <span class="to">→ ${esc(m.to)}</span>
+  const msgs = state.messages.filter((m) => {
+    if (filter === "broadcast") return m.to === "all";
+    if (filter === "direct") return m.to !== "all";
+    if (filter === "pending") return isPendingReq(m);
+    return true;
+  });
+  if (!msgs.length) {
+    const what = filter === "broadcast" ? "还没有广播消息" : filter === "direct" ? "还没有单点消息" : filter === "pending" ? "没有待回复的单点 request" : "还没有消息";
+    el.innerHTML = `<div class="empty">${what}<small>${filter === "pending" ? "定向 request 会唤醒空闲会话并等待回复" : ""}</small></div>`;
+    return;
+  }
+  const scrollTop = el.scrollTop;
+  el.innerHTML = msgs.map((m) => {
+    const aud = msgAudience(m);
+    const pending = isPendingReq(m);
+    const sess = liveByName.get(m.from);
+    const w = sess ? wsOf(sess) : null;
+    const fromHuman = isHuman(m.from);
+    const toLabel = m.to === "all" ? "所有会话" : humanName(m.to);
+    const wsChip = w ? `<span class="ws-chip">⌂ ${esc(w.label)}</span>` : "";
+    const requester = m.replyTo ? requestById.get(m.replyTo) : null;
+    const foot = m.kind === "reply"
+      ? `<div class="msg-foot"><span class="re">↩ 回复${requester ? " " + esc(requester.from) : ""}</span></div>`
+      : "";
+    const acts = sess ? `
+      <div class="msg-actions">
+        <button data-act="reply" data-id="${escA(m.messageId)}" data-from="${escA(m.from)}" title="回复 ${escA(m.from)}">↩</button>
+        <button data-act="direct" data-from="${escA(m.from)}" title="单点消息 ${escA(m.from)}">单点</button>
+      </div>` : "";
+    const fromEl = fromHuman
+      ? `<span class="from human">${esc(humanName(m.from))}</span>`
+      : `<button class="from" data-act="direct" data-from="${escA(m.from)}" title="单点消息 ${escA(m.from)}">${esc(humanName(m.from))}</button>`;
+    return `
+      <article class="msg ${aud.cls}${pending ? " pending" : ""}" id="msg-${escA(m.messageId)}">
+        ${acts}
+        <div class="msg-head">
+          <span class="aud ${aud.cls}">${aud.label}${aud.cls === "broadcast" && aud.n ? " · " + aud.n : ""}</span>
+          ${fromEl}
+          ${wsChip}
+          <span class="arrow">→</span>
+          <span class="to${m.to === "all" ? " all" : ""}">${esc(toLabel)}</span>
+          <span class="badge ${esc(m.kind || "chat")}">${esc(m.kind || "chat")}</span>
+          ${reqState(m)}
+          <span class="time">${fmtTime(m.ts)}</span>
+        </div>
+        <div class="msg-body">${esc(m.body)}</div>
+        ${foot}
+      </article>`;
+  }).join("");
+  el.scrollTop = Math.min(scrollTop, Math.max(0, el.scrollHeight));
+}
+
+function renderFilters() {
+  const counts = { all: state.messages.length, broadcast: 0, direct: 0, pending: pendingDirect.length + pendingHuman.length };
+  for (const m of state.messages) {
+    if (m.to === "all") counts.broadcast++;
+    else counts.direct++;
+  }
+  for (const b of $("filters").querySelectorAll("button")) {
+    const f = b.dataset.filter;
+    b.classList.toggle("on", f === filter);
+    const n = b.querySelector("b");
+    if (n) n.textContent = counts[f] || 0;
+  }
+}
+
+function renderTraffic() {
+  const el = $("traffic");
+  const rows = state.messages.slice().reverse(); // a log reads oldest -> newest
+  const unreadMsgs = rows.filter((m) => unreadCount(m) > 0).length;
+  $("trafMeta").textContent = `全部 ${rows.length} · 未读 ${unreadMsgs} 条`;
+  $("trafToggle").textContent = trafficCollapsed ? "展开" : "收起";
+  $("trafPanel").classList.toggle("collapsed", trafficCollapsed);
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty" style="padding:10px">还没有收发记录</div>';
+    return;
+  }
+  const atBottom = !trafficInit || el.scrollTop + el.clientHeight >= el.scrollHeight - 8;
+  const scrollTop = el.scrollTop;
+  el.innerHTML = rows.map((m) => {
+    const aud = msgAudience(m);
+    const unread = unreadCount(m);
+    const human = isHuman(m.from);
+    const req = m.kind === "request";
+    const answered = req && (repliesById.get(m.messageId) || []).length > 0;
+    const toHuman = isHumanTarget(m);
+    const fromLabel = human ? humanName(m.from) : m.from;
+    const toLabel = m.to === "all" ? "所有会话" : humanName(m.to);
+    let stateText = "已投递", stateCls = "";
+    if (unread) { stateText = `未读 ${unread}`; stateCls = "unread"; }
+    else if (req) { stateText = answered ? "已回复" : "已读未回"; stateCls = "req"; }
+    else if (toHuman) stateText = "人工";
+    else if (m.to === "all") stateText = `广播${m.recipients ? " " + m.recipients : ""}`;
+    const del = unread
+      ? ` <button class="tdel" data-act="delete" data-id="${escA(m.messageId)}" title="删除未读消息">✕</button>` : "";
+    return `
+      <div class="tline ${aud.cls}${human ? " out" : ""}">
+        <span class="tdir" title="${human ? "人类发出" : "agent 发出"}">${human ? "↗" : "↘"}</span>
+        <span class="ttime">${fmtTime(m.ts)}</span>
+        <span class="tfrom">${esc(fromLabel)}</span>
+        <span class="tarrow">→</span>
+        <span class="tto">${esc(toLabel)}</span>
         <span class="badge ${esc(m.kind || "chat")}">${esc(m.kind || "chat")}</span>
-        ${m.replyTo ? `<span class="re">↩ ${esc(m.replyTo)}</span>` : ""}
-        <span class="time">${hhmm(m.ts)}</span>
-      </div>
-      <div class="body">${esc(m.body)}</div>
-    </div>`).join("");
-  el.querySelectorAll("[data-to]").forEach(n => n.onclick = () => compose(n.dataset.to, "chat"));
+        <span class="tbody" title="${escA(m.body)}">${esc(m.body)}</span>
+        <span class="tstate ${stateCls}">${stateText}</span>${del}
+      </div>`;
+  }).join("");
+  if (atBottom) el.scrollTop = el.scrollHeight;
+  else el.scrollTop = Math.min(scrollTop, el.scrollHeight);
+  trafficInit = true;
+}
+
+async function deleteMessage(id) {
+  if (!id || deleting.has(id)) return;
+  const m = state.messages.find((x) => x.messageId === id);
+  if (!m) { setNote("消息已不存在", false); await refresh(); return; }
+  const names = unreadByMsg.get(id) || [];
+  if (!names.length) { setNote("这条消息已经被读取，不能删除", false); await refresh(); return; }
+  const target = m.to === "all" ? "所有会话" : humanName(m.to);
+  const snippet = (m.body || "").replace(/\s+/g, " ").slice(0, 100);
+  const ok = confirm(`删除这条未读消息？\n\n[${m.kind || "chat"}] ${m.from} → ${target}\n${snippet}\n\n未读会话：${names.join(", ")}\n它会从这些会话的收件箱和全局日志中移除。`);
+  if (!ok) return;
+  deleting.add(id);
+  try {
+    const r = await api("delete", { method: "POST", body: JSON.stringify({ messageId: id }) });
+    if (r.ok) {
+      setNote(`已删除未读消息（${r.deleted} 个收件箱）`, true);
+      await refresh();
+    } else {
+      setNote("删除失败：" + (r.error || "unknown error"), false);
+    }
+  } catch (e) {
+    setNote("删除失败：网络/权限错误", false);
+  } finally {
+    deleting.delete(id);
+  }
+}
+
+function updateHint() {
+  const kind = $("kind").value;
+  const target = $("target").value;
+  const name = target === "all" ? "所有在线会话" : target;
+  let text;
+  if (kind === "request") {
+    text = target === "all"
+      ? "广播 request：发往所有在线会话，不会唤醒空闲会话，可能收到多人回复。"
+      : `定向 request：会唤醒空闲的 ${name}，并要求它回一句话（推荐用于提问）。`;
+  } else if (kind === "urgent") {
+    text = target === "all"
+      ? "⚠ urgent 广播会唤醒所有空闲会话，只用于真实损害或人类明确要求。"
+      : `⚠ 立即中断 ${name}：只用于真实损害或人类明确要求。`;
+  } else if (kind === "notice") {
+    text = "单向通知：不期待回复，对方下次活动时送达。";
+  } else if (kind === "reply") {
+    text = replyTo ? `↩ 回复 ${replyFrom} 的这条消息（自动带 replyTo）` : "reply：建议从消息右上角「↩」进入，自动携带 replyTo。";
+  } else {
+    text = target === "all"
+      ? "广播 chat：不唤醒空闲会话，对方下次活动时送达。"
+      : `单点 chat 给 ${name}：不唤醒空闲会话；需要答复请用 request。`;
+  }
+  $("hint").textContent = text;
+  $("replybar").classList.toggle("hidden", !replyTo);
+  if (replyTo) {
+    $("replylabel").textContent = `↩ 正在回复 ${replyFrom} 的消息`;
+    $("kind").value = "reply";
+    $("target").value = replyFrom;
+  }
+}
+
+function renderComposer() {
+  renderTargets();
+  if (replyTo) $("kind").value = "reply";
+  else if (!$("kind").value) $("kind").value = "chat";
+  updateHint();
+}
+
+function renderAll() {
+  renderHeader();
+  renderRoster();
+  renderComposer();
+  renderFeed();
+  renderFilters();
+  renderTraffic();
+}
+
+function setNote(text, ok) {
+  const el = $("note");
+  el.textContent = text || "";
+  el.className = "note" + (text ? (ok ? " ok" : " err") : "");
 }
 
 function compose(to, kind) {
-  selected = to; $("target").value = to; $("kind").value = kind || "chat";
+  selected = to || "all";
+  const sel = $("target");
+  if ([...sel.options].some((o) => o.value === selected)) sel.value = selected;
+  $("kind").value = kind || "chat";
+  if (kind !== "reply") clearReply();
+  updateHint();
   $("body").focus();
 }
 
-async function refresh() {
-  try { state = await api("state"); } catch (e) { return; }
-  $("uptime").textContent = fmtUptime(state.uptime || 0);
-  $("nsess").textContent = state.sessions.length;
-  $("nmsg").textContent = state.messages.length;
-  renderRoster(); renderFeed();
+function startReply(id, from) {
+  if (!liveByName.has(from)) { setNote("对方已离线，无法回复", false); return; }
+  replyTo = id;
+  replyFrom = from;
+  selected = from;
+  compose(from, "reply");
+  setNote("", true);
+}
+
+function clearReply() {
+  replyTo = null;
+  replyFrom = "";
+  $("replybar").classList.add("hidden");
 }
 
 async function send() {
+  if (sending) return;
   const body = $("body").value.trim();
-  if (!body) return;
+  if (!body) { $("body").focus(); return; }
+  const to = $("target").value;
+  if (!to) { setNote("请选择收件人", false); return; }
+  if (to !== "all" && !liveByName.has(to)) { setNote("目标已离线，请重新选择收件人（不会自动改成广播）", false); return; }
+  sending = true;
   $("send").disabled = true;
   try {
-    const r = await api("send", { method: "POST", body: JSON.stringify({
-      to: $("target").value, kind: $("kind").value, body, from: $("ident").value }) });
-    $("note").textContent = r.ok
-      ? (r.dup ? "suppressed (duplicate)" : "delivered to " + (r.recipients > 1 ? r.recipients + " sessions" : $("target").value))
-      : "error: " + r.error;
-    if (r.ok) $("body").value = "";
-  } catch (e) { $("note").textContent = "send failed"; }
-  $("send").disabled = false; refresh();
+    const payload = { to, kind: $("kind").value, body, from: $("ident").value || "user-web" };
+    if (replyTo && payload.kind === "reply") payload.replyTo = replyTo;
+    const r = await api("send", { method: "POST", body: JSON.stringify(payload) });
+    if (!r.ok) {
+      setNote("发送失败：" + (r.error || "unknown error"), false);
+    } else {
+      let msg;
+      if (r.dup) msg = "重复消息，已抑制";
+      else if (payload.kind === "request" && to === "all") msg = `已广播 request 给 ${r.recipients || 0} 个会话（不会唤醒空闲会话）`;
+      else if (payload.kind === "request") msg = `已送达 ${to} · 等待回复（空闲会话已唤醒）`;
+      else if (to === "all") msg = `已广播给 ${r.recipients || 0} 个会话`;
+      else msg = `已送达 ${to}`;
+      setNote(msg, true);
+      $("body").value = "";
+      clearReply();
+      if (payload.kind === "reply") $("kind").value = "chat";
+      updateHint();
+      await refresh();
+    }
+  } catch (e) {
+    setNote("发送失败：网络/权限错误", false);
+  } finally {
+    sending = false;
+    $("send").disabled = false;
+  }
 }
 
-$("send").onclick = send;
-$("body").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
-});
-$("ident").addEventListener("change", () => $("ident").value = ($("ident").value.trim() || "user-web"));
+async function refresh() {
+  try {
+    const next = await api("state");
+    if (next && next.ok) {
+      state = next;
+      state.sessions = state.sessions || [];
+      state.messages = (state.messages || []).slice().sort((a, b) => b.ts - a.ts);
+      analyze();
+      renderAll();
+      $("conn").textContent = "● live";
+      $("conn").className = "conn";
+    }
+  } catch (e) {
+    $("conn").textContent = "● 重连中…";
+    $("conn").className = "conn off";
+  }
+}
 
-$("proxhint").textContent = location.pathname.includes("/proxy/")
-  ? "code-server proxy: " + location.pathname.split("/").slice(0, 3).join("/") + " → agentbus web"
-  : "";
+// -- events -----------------------------------------------------------------
+$("roster").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-act='compose']");
+  if (!b) return;
+  compose(b.dataset.name, b.dataset.kind || "chat");
+});
+$("feed").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  if (b.dataset.act === "reply") startReply(b.dataset.id, b.dataset.from);
+  else if (b.dataset.act === "delete") deleteMessage(b.dataset.id);
+  else if (b.dataset.act === "direct") {
+    if (liveByName.has(b.dataset.from)) compose(b.dataset.from, "chat");
+    else setNote("对方已离线", false);
+  }
+});
+$("traffic").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-act='delete']");
+  if (b) deleteMessage(b.dataset.id);
+});
+$("filters").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-filter]");
+  if (!b) return;
+  filter = b.dataset.filter;
+  renderFeed();
+  renderFilters();
+});
+$("pendingpill").addEventListener("click", () => {
+  filter = "pending";
+  renderFeed();
+  renderFilters();
+  $("feed").scrollTop = 0;
+});
+$("trafToggle").addEventListener("click", () => {
+  trafficCollapsed = !trafficCollapsed;
+  try { localStorage.setItem("ab-traf-collapsed", trafficCollapsed ? "1" : "0"); } catch (e) {}
+  renderTraffic();
+});
+$("target").addEventListener("change", () => {
+  const v = $("target").value;
+  if (replyTo && v !== replyFrom) {
+    clearReply();
+    $("kind").value = "chat";
+  }
+  selected = v;
+  updateHint();
+});
+$("kind").addEventListener("change", () => { if ($("kind").value !== "reply") clearReply(); updateHint(); });
+$("replyclear").addEventListener("click", () => {
+  clearReply();
+  $("kind").value = "chat";
+  updateHint();
+});
+$("send").addEventListener("click", send);
+$("body").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
+});
+$("ident").addEventListener("change", () => {
+  const v = $("ident").value.trim() || "user-web";
+  $("ident").value = v;
+  try { localStorage.setItem("ab-identity", v); } catch (e) {}
+});
+try {
+  const saved = localStorage.getItem("ab-identity");
+  if (saved) $("ident").value = saved;
+  trafficCollapsed = localStorage.getItem("ab-traf-collapsed") === "1";
+} catch (e) {}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+
 refresh();
 setInterval(refresh, 2000);
 </script>

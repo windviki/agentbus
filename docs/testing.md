@@ -6,6 +6,7 @@
 |---|---|---|---|
 | 单元 | `internal/bus/*_test.go` | 注册/命名/投递/回收/持久化/限速/去重/kind/ask/reply | Go |
 | 端到端 | [test/e2e.sh](../test/e2e.sh) | 真 daemon + 双会话 hook JSON + Web + A2A + MCP + 重启 | Go、curl |
+| DSH idle wake | [test/dsh-idle-wake.mjs](../test/dsh-idle-wake.mjs) | 插件对 idle agent 的 Stop 策略 + `agent.steer`（mock agent，不花模型额度） | Go、Node |
 | 插件结构 | `claude plugin validate` / `plugin details` | 插件清单、hooks 是否被宿主接受 | Claude Code |
 | 互操作 | [test/interop.sh](../test/interop.sh) | 真实 dsh ↔ claude 会话能否收发并作出反应 | dsh、claude、额度 |
 
@@ -21,6 +22,7 @@ go test -race ./...      # 并发/竞态（可选，较慢）
 
 ```bash
 ./test/e2e.sh
+./test/dsh-idle-wake.sh   # DSH 插件空闲唤醒（mock agent，不花额度）
 ```
 
 脚本会在 `mktemp` 的 `AGENTBUS_HOME` 中自起 daemon（看板端口默认 18787，
@@ -34,12 +36,12 @@ go test -race ./...      # 并发/竞态（可选，较慢）
 | SessionStart | 注册、名字、名册包含对端状态、会话契约（primer） |
 | 工作区 | `peers` 按 worktree/repo 分组；Kimi 首个 prompt 自动注入名册 |
 | 投递 | PostToolUse 注入、ack 后不重复投递 |
-| 投递梯子 | chat 不唤醒；urgent 唤醒并 flush 队列 |
-| ask | 请求-答复往返，答复被消费不重复投递 |
+| 投递梯子 | chat 不唤醒；定向 request 唤醒并 flush 队列；广播 request 不唤醒；`AGENTBUS_WAKE=urgent` 退回仅 urgent；urgent 始终唤醒 |
+| ask | 定向 request 请求-答复往返，答复被消费不重复投递 |
 | reply | 无需记 id，回复最近一条对端消息（kind=reply + replyTo） |
 | notify | 单向通知、无回复语义 |
 | 错误 | 未知收件人报错并给建议 |
-| Web | `/api/state`、`/api/send`、内嵌页面与相对路径 |
+| Web | `/api/state`（含 unread）、`/api/send`（含 kind=request 唤醒）、`/api/delete` 删除未读、内嵌页面与相对路径、广播/单点、工作区、收发日志 UI 标记 |
 | A2A | Agent Card、`message/send` 投递、未知方法 `-32601` |
 | MCP | initialize / tools/list / tools/call 走真实总线 |
 | 运维 | log、leave + 墓碑、PID 回收、重启持久化、人类以 `user` 发送 |
@@ -140,7 +142,7 @@ printf '%s' '{"hook_event_name":"SessionStart","session_id":"kimi-sim-2",
 printf '%s' '{"hook_event_name":"UserPromptSubmit",...}' | agentbus hook
 # → 纯文本 peer 消息（Kimi 拼入上下文）
 printf '%s' '{"hook_event_name":"Stop",...}' | agentbus hook
-# → 有 urgent 时 exit 2，reason 在 stderr
+# → 有 urgent 或定向 request 时 exit 2，reason 在 stderr
 ```
 
 安装见 [integrations/kimi.md](integrations/kimi.md)。额度恢复后用

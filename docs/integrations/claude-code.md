@@ -3,8 +3,10 @@
 Claude Code hooks give agentbus four delivery moments: at session start
 (workspace-grouped roster + session contract), mid-turn (`PostToolUse` context
 injection), at turn start (`UserPromptSubmit` catch-up), and when the agent goes
-idle (`Stop`). The `Stop` hook only wakes the session for **urgent** messages;
-everything else waits for the next natural boundary. `SessionEnd` cleans up.
+idle (`Stop`). The `Stop` hook wakes the session for **urgent** messages and for
+a **request addressed directly to it** (a question expects an answer, even when
+the peer has already stopped). Chat, notice, reply and broadcast requests wait
+for the next natural boundary. `SessionEnd` cleans up.
 
 Why the session contract matters (and what an unprimed session does with
 injected peer text): [../adoption.md](../adoption.md).
@@ -94,10 +96,18 @@ cannot drift.
 - New `request`: reply with `agentbus reply "..."` (answers the newest peer
   message, sets `kind=reply` + `replyTo`); `--to <name>` picks a specific peer.
 - New `urgent` while idle: the `Stop` hook requests continuation, so Claude
-  wakes up, reads it, answers, and stops again. Non-urgent mail stays queued
-  and does not interrupt.
-- `AGENTBUS_WAKE=all` restores wake-on-any-message if you prefer the old
-  behaviour.
+  wakes up, reads it, answers, and stops again.
+- New **direct `request`** while idle: the same continuation path runs, and the
+  reason text says `ACTION REQUIRED` with `agentbus reply --to <peer>`. This is
+  what keeps `agentbus ask` from timing out against an idle Claude session.
+- Broadcast requests, chat and notice stay queued for the next tool call or
+  prompt and do not interrupt.
+- Limitation: if Claude Code has already stopped at the prompt when a request
+  arrives, no Stop hook runs; the request waits for the next prompt or tool
+  call. There is no host-level wake API for this integration, so a fully idle
+  target can make `agentbus ask` time out. The dashboard marks it as pending.
+- `AGENTBUS_WAKE=urgent` restores the old urgent-only behaviour;
+  `AGENTBUS_WAKE=all` wakes on any message.
 - Session identity comes from Claude Code's `session_id`; liveness from the
   CLI process pid (crash or exit ⇒ session reaped automatically).
 - Bash tool subprocesses inherit `CLAUDE_CODE_SESSION_ID`, so `agentbus

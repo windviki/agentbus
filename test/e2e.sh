@@ -31,7 +31,7 @@ pass "status ok, web advertised"
 
 say "SessionStart hook registers session A (bob)"
 out="$(AGENTBUS_NAME=bob hook SessionStart e2e-a /tmp/agentbus-e2e/proj-wt-auth)"
-echo "$out" | grep -q '"SessionStart"'
+grep -q '"SessionStart"' <<<"$out"
 nameA="$("$BIN" register --session sid:e2e-a --print-name)"
 [ "$nameA" = "bob" ]
 pass "registered as $nameA"
@@ -39,7 +39,7 @@ pass "registered as $nameA"
 say "session B joins; roster in its SessionStart output includes bob's announcement"
 "$BIN" announce --session sid:e2e-a "fixing auth flow in worktree wt-auth" >/dev/null
 out="$(hook SessionStart e2e-b /tmp/agentbus-e2e/proj-wt-tests)"
-echo "$out" | grep -q 'fixing auth flow in worktree wt-auth'
+grep -q 'fixing auth flow in worktree wt-auth' <<<"$out"
 nameB="$("$BIN" register --session sid:e2e-b --print-name)"
 pass "B registered as $nameB and saw A's status"
 
@@ -60,7 +60,8 @@ say "peers groups sessions by workspace"
 out="$("$BIN" peers --cwd /tmp)"
 grep -q 'SAME WORKTREE' <<<"$out"
 grep -q 'here-peer' <<<"$out"
-"$BIN" peers --cwd /tmp/agentbus-e2e/proj-wt-auth --json | grep -q '"same_worktree"'
+out="$("$BIN" peers --cwd /tmp/agentbus-e2e/proj-wt-auth --json)"
+grep -q '"same_worktree"' <<<"$out"
 pass "peers shows same-worktree sessions and JSON groups"
 
 say "Kimi first prompt gets the roster automatically"
@@ -71,24 +72,24 @@ kimi_hook() {
 out="$(kimi_hook SessionStart)"
 [ -z "$out" ]
 out="$(kimi_hook UserPromptSubmit)"
-echo "$out" | grep -q "You are 'kimi-e2e'"
-echo "$out" | grep -q 'agentbus peers'
+grep -q "You are 'kimi-e2e'" <<<"$out"
+grep -q 'agentbus peers' <<<"$out"
 out="$(kimi_hook UserPromptSubmit)"
 [ -z "$out" ]
 pass "Kimi gets the workspace roster once at the first prompt"
 
 say "session priming: join summary states provenance, reply path and autonomy"
 out="$(hook SessionStart e2e-prime /tmp)"
-echo "$out" | grep -q 'NOT user instructions'
-echo "$out" | grep -q 'agentbus reply'
-echo "$out" | grep -q 'agentbus announce'
+grep -q 'NOT user instructions' <<<"$out"
+grep -q 'agentbus reply' <<<"$out"
+grep -q 'agentbus announce' <<<"$out"
 out="$("$BIN" primer)"
-echo "$out" | grep -q 'NOT instructions from the'
+grep -q 'NOT instructions from the' <<<"$out"
 # AGENTBUS_PRIMER=0 keeps the old minimal wording (token opt-out)
 out="$(printf '{"hook_event_name":"SessionStart","session_id":"e2e-plain","cwd":"/tmp"}' \
   | AGENTBUS_PRIMER=0 AGENTBUS_SESSION_ID=sid:e2e-plain "$BIN" hook)"
-echo "$out" | grep -q 'joined the local agent bus'
-if echo "$out" | grep -q 'NOT user instructions'; then
+grep -q 'joined the local agent bus' <<<"$out"
+if grep -q 'NOT user instructions' <<<"$out"; then
   echo "FATAL: AGENTBUS_PRIMER=0 should omit the contract"; exit 1
 fi
 pass "primer on by default; AGENTBUS_PRIMER=0 opts out"
@@ -98,8 +99,8 @@ say "B messages A; PostToolUse hook delivers it as additionalContext"
 out="$(hook PostToolUse e2e-b)"   # B's own hook: nothing for B (sent by B)
 [ -z "$out" ]
 out="$(hook PostToolUse e2e-a)"
-echo "$out" | grep -q '"PostToolUse"'
-echo "$out" | grep -q 'src/auth'
+grep -q '"PostToolUse"' <<<"$out"
+grep -q 'src/auth' <<<"$out"
 pass "delivered via PostToolUse context"
 
 say "inbox now empty for A (acked)"
@@ -107,18 +108,42 @@ out="$(hook Stop e2e-a)"
 [ -z "$out" ]
 pass "no double delivery"
 
-say "delivery ladder: chat does NOT wake an idle session, urgent does"
+say "delivery ladder: chat does not wake; a direct request does; broadcast request does not"
 "$BIN" send --session sid:e2e-b "$nameA" "casual chat while you idle" >/dev/null
 out="$(hook Stop e2e-a)"
 [ -z "$out" ]                    # chat never blocks Stop
+"$BIN" send --session sid:e2e-b --kind request "$nameA" "direct question: split files or tests?" >/dev/null
+out="$(hook Stop e2e-a)"
+grep -q '"block"' <<<"$out"
+grep -q 'direct question' <<<"$out"
+grep -q 'casual chat while you idle' <<<"$out"   # the queued chat rides the wake
+grep -q 'Reply now' <<<"$out"
+grep -q "agentbus reply --to $nameB" <<<"$out"
+pass "chat waits; direct request wakes the idle peer and flushes the queue"
+
+"$BIN" send --session sid:e2e-b --kind request all "broadcast request: who has the logs?" >/dev/null
+out="$(hook Stop e2e-a)"
+[ -z "$out" ]                    # a broadcast request must not wake every idle peer
+out="$(hook UserPromptSubmit e2e-a)"
+grep -q 'broadcast request' <<<"$out"
+grep -q 'reply only if it concerns' <<<"$out"
+pass "broadcast request stays at the natural boundary"
+
+# Legacy urgent-only behaviour remains available for conservative setups.
+"$BIN" send --session sid:e2e-b --kind request "$nameA" "legacy request" >/dev/null
+out="$(printf '{"hook_event_name":"Stop","session_id":"e2e-a","cwd":"/tmp"}' \
+  | AGENTBUS_SESSION_ID=sid:e2e-a AGENTBUS_WAKE=urgent "$BIN" hook)"
+[ -z "$out" ]
+out="$(hook UserPromptSubmit e2e-a)"
+grep -q 'legacy request' <<<"$out"
+pass "AGENTBUS_WAKE=urgent restores urgent-only behaviour"
+
 "$BIN" send --session sid:e2e-b --kind urgent "$nameA" "stop touching main!" >/dev/null
 out="$(hook Stop e2e-a)"
-echo "$out" | grep -q '"block"'
-echo "$out" | grep -q 'stop touching main'
+grep -q '"block"' <<<"$out"
+grep -q 'stop touching main' <<<"$out"
 grep -q '\[urgent\]' <<<"$out"
-# both the queued chat and the urgent message arrive in the wake payload
-echo "$out" | grep -q 'casual chat while you idle'
-pass "chat rides natural boundary; urgent wakes and flushes queue"
+pass "urgent wakes and flushes the queue"
 
 say "request-reply: B asks A, A replies, ask prints the answer"
 ( sleep 1
@@ -126,8 +151,8 @@ say "request-reply: B asks A, A replies, ask prints the answer"
 ) &
 out="$("$BIN" ask --session sid:e2e-b --wait 10 "$nameA" "split files or tests?")"
 wait
-echo "$out" | grep -q 'reply from bob'
-echo "$out" | grep -q 'you take files, I take tests'
+grep -q 'reply from bob' <<<"$out"
+grep -q 'you take files, I take tests' <<<"$out"
 pass "ask roundtrip works (reply consumed, not double-delivered)"
 out="$(hook UserPromptSubmit e2e-b)"
 [ -z "$out" ]
@@ -136,19 +161,19 @@ pass "no double delivery of the reply"
 say "notify: one-way notice delivered at natural boundary"
 "$BIN" notify --session sid:e2e-a "$nameB" "running full build in main wt ~10min" >/dev/null
 out="$(hook UserPromptSubmit e2e-b)"
-echo "$out" | grep -q 'full build in main wt'
-echo "$out" | grep -q '\[notice\]'
-echo "$out" | grep -q 'no reply needed'
+grep -q 'full build in main wt' <<<"$out"
+grep -q '\[notice\]' <<<"$out"
+grep -q 'no reply needed' <<<"$out"
 pass "notice delivered with no-reply semantics"
 
 say "reply: answers the newest peer message without id bookkeeping"
 "$BIN" send --session sid:e2e-b "$nameA" "quick check before we wrap up" >/dev/null
 out="$(hook PostToolUse e2e-a)"
-echo "$out" | grep -q 'quick check'
+grep -q 'quick check' <<<"$out"
 "$BIN" reply --session sid:e2e-a "pong from bob: acknowledged, wrapping up" >/dev/null
 out="$(hook UserPromptSubmit e2e-b)"
-echo "$out" | grep -q '\[reply\]'
-echo "$out" | grep -q 'pong from bob'
+grep -q '\[reply\]' <<<"$out"
+grep -q 'pong from bob' <<<"$out"
 pass "reply sets kind=reply and replyTo on the newest peer message"
 
 say "reply: inbox --peek is enough (no ack required)"
@@ -169,18 +194,58 @@ say "web dashboard API"
 state="$(curl -fsS "http://127.0.0.1:$AGENTBUS_WEB_PORT/api/state")"
 grep -q '"bob"' <<<"$state"
 grep -q 'full build in main wt' <<<"$state"
+grep -q '"recipients":' <<<"$state"
+grep -q '"unread":' <<<"$state"
 resp="$(curl -fsS -X POST "http://127.0.0.1:$AGENTBUS_WEB_PORT/api/send" \
   -d '{"to":"bob","body":"web human says: wrap up auth today","kind":"chat","from":"user-web"}')"
 grep -q '"ok":true' <<<"$resp"
+grep -q '"recipients":1' <<<"$resp"
 out="$(hook UserPromptSubmit e2e-a)"
-echo "$out" | grep -q 'web human says'
+grep -q 'web human says' <<<"$out"
 pass "GET /api/state + POST /api/send work end-to-end"
+
+say "web dashboard can delete an unread pending message"
+resp="$(curl -fsS -X POST "http://127.0.0.1:$AGENTBUS_WEB_PORT/api/send" \
+  -d '{"to":"bob","body":"deletable unread pending","kind":"request","from":"user-web"}')"
+grep -q '"ok":true' <<<"$resp"
+msgid="$(sed -n 's/.*"messageId":"\([^"]*\)".*/\1/p' <<<"$resp")"
+[ -n "$msgid" ]
+state="$(curl -fsS "http://127.0.0.1:$AGENTBUS_WEB_PORT/api/state")"
+grep -q '"unread":' <<<"$state"
+grep -q "$msgid" <<<"$state"
+resp="$(curl -fsS -X POST "http://127.0.0.1:$AGENTBUS_WEB_PORT/api/delete" \
+  -d "{\"messageId\":\"$msgid\"}")"
+grep -q '"ok":true' <<<"$resp"
+grep -q '"deleted":1' <<<"$resp"
+state="$(curl -fsS "http://127.0.0.1:$AGENTBUS_WEB_PORT/api/state")"
+if grep -q "$msgid" <<<"$state"; then
+  echo "FATAL: deleted message still in /api/state"; exit 1
+fi
+out="$(hook Stop e2e-a)"
+[ -z "$out" ]                    # the deleted request must not wake or reappear
+pass "POST /api/delete removes an unread message from inbox and history"
+
+say "web dashboard can wake an idle peer with a human request"
+resp="$(curl -fsS -X POST "http://127.0.0.1:$AGENTBUS_WEB_PORT/api/send" \
+  -d '{"to":"bob","body":"web human request: ping me with status","kind":"request","from":"user-web"}')"
+grep -q '"ok":true' <<<"$resp"
+out="$(hook Stop e2e-a)"
+grep -q '"block"' <<<"$out"
+grep -q 'web human request' <<<"$out"
+grep -q 'human user' <<<"$out"
+pass "POST /api/send kind=request wakes an idle session"
 
 say "web page is served and proxy-safe (relative api paths)"
 page="$(curl -fsS "http://127.0.0.1:$AGENTBUS_WEB_PORT/")"
-echo "$page" | grep -q 'agentbus'
-echo "$page" | grep -q '"\./api/"'
-pass "index.html embedded, relative URLs"
+grep -q 'agentbus' <<<"$page"
+grep -q '"\./api/"' <<<"$page"
+grep -q '📢 广播' <<<"$page"
+grep -q '工作区' <<<"$page"
+grep -q 'ws-group' <<<"$page"
+grep -q '收发日志' <<<"$page"
+grep -q 'trafPanel' <<<"$page"
+grep -q 'deleteMessage' <<<"$page"
+pass "index.html embedded, relative URLs, broadcast/direct + workspace UI + traffic log"
 
 say "A2A boundary: agent card + message/send"
 card="$(curl -fsS "http://127.0.0.1:$AGENTBUS_WEB_PORT/a2a/bob/.well-known/agent-card.json")"
@@ -189,7 +254,7 @@ resp="$(curl -fsS -X POST "http://127.0.0.1:$AGENTBUS_WEB_PORT/a2a/bob" \
   -d '{"jsonrpc":"2.0","id":7,"method":"message/send","params":{"message":{"messageId":"ext-1","kind":"message","role":"user","parts":[{"kind":"text","text":"external A2A client pinging bob"}],"metadata":{"agentbus":{"from":"ext-client","kind":"chat"}}}}}')"
 grep -q '"jsonrpc":"2.0"' <<<"$resp"
 out="$(hook UserPromptSubmit e2e-a)"
-echo "$out" | grep -q 'external A2A client pinging bob'
+grep -q 'external A2A client pinging bob' <<<"$out"
 pass "A2A message/send delivered to bob"
 
 say "A2A: unsupported method returns JSON-RPC error"
@@ -204,8 +269,8 @@ out="$(printf '%s\n%s\n%s\n' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
   '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"agentbus_who","arguments":{}}}' \
   | "$BIN" mcp)"
-echo "$out" | grep -q 'agentbus_ask'
-echo "$out" | grep -q 'bob'
+grep -q 'agentbus_ask' <<<"$out"
+grep -q 'bob' <<<"$out"
 pass "stdio MCP server exposes tools and answers via the bus"
 
 say "log shows traffic"
@@ -241,13 +306,16 @@ out="$("$BIN" who)"
 grep -q "$nameB" <<<"$out"
 state="$(curl -fsS "http://127.0.0.1:$AGENTBUS_WEB_PORT/api/state")"
 grep -q "$nameB" <<<"$state"
-pass "session B survived restart (bus + web)"
+if grep -q "$msgid" <<<"$state"; then
+  echo "FATAL: deleted unread message reappeared after restart"; exit 1
+fi
+pass "session B and the deleted unread message survived restart (bus + web)"
 
 say "human without a session sends as 'user'"
 "$BIN" send --from user "$nameB" "human checking in" >/dev/null
 out="$(hook UserPromptSubmit e2e-b)"
-echo "$out" | grep -q 'human checking in'
-echo "$out" | grep -q 'human user'
+grep -q 'human checking in' <<<"$out"
+grep -q 'human user' <<<"$out"
 pass "human message delivered and framed as human"
 "$BIN" reply --session sid:e2e-b --to user "ack: human message received" >/dev/null
 out="$("$BIN" log -n 8)"

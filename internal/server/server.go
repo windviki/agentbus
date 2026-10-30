@@ -55,7 +55,7 @@ func Run(home string) error {
 	_ = os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600)
 
 	// Web dashboard + A2A boundary on loopback (disable: AGENTBUS_WEB=0).
-	s.webAddr = web.Start(s.b, Version, s.started)
+	s.webAddr = web.Start(s.b, Version, s.started, s.save)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)

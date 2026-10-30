@@ -13,7 +13,7 @@
  *   agent/created        -> `agentbus hook` SessionStart, inject contract+roster
  *   agent/pre-step       -> `agentbus hook` UserPromptSubmit (turn boundary)
  *   tools/post-execute   -> `agentbus hook` PostToolUse (same-step injection)
- *   agent/turn-stopping  -> `agentbus hook` Stop (urgent => steer/continue)
+ *   agent/turn-stopping  -> `agentbus hook` Stop (urgent / direct request => steer/continue)
  *   agent/disposed       -> `agentbus leave`
  *
  * Plus native tools: agentbus_who / send / ask / reply / announce / inbox /
@@ -99,6 +99,19 @@ function dbg(message) {
   }
 }
 const ASK_TIMEOUT_MS = 180000
+/**
+ * Idle wake interval. A Stop hook cannot fire after the agent has already
+ * stopped, so a direct request sent while the session sits at the prompt
+ * would wait for the human. While an agent is idle we poll the same policy
+ * through `agentbus hook Stop` and steer it awake when a request/urgent is
+ * queued. `agent.steer()` on an idle driver starts a turn. 0 disables the
+ * poller; AGENTBUS_DSH_POLL_MS overrides the 5s default.
+ */
+const IDLE_POLL_MS = (() => {
+  const raw = process.env.AGENTBUS_DSH_POLL_MS
+  const n = raw == null ? 5000 : Number(raw)
+  return Number.isFinite(n) ? Math.max(0, Math.min(n, 60000)) : 5000
+})()
 
 function sessionKey(agent) {
   const id = String(agent?.session?.id ?? '')
@@ -223,6 +236,8 @@ function cliResultText(result) {
 
 export function apply(ctx) {
   const serial = makeSerial()
+  const liveAgents = new Set()
+  const polling = new Set()
   try {
     debugSink = (message) => ctx.logger?.info?.('[agentbus] ' + message)
   } catch {
@@ -232,6 +247,7 @@ export function apply(ctx) {
 
   // 1) Session start: register on the bus, then inject contract + roster.
   ctx.on('agent/created', async ({ agent }) => {
+    liveAgents.add(agent)
     try {
       const output = await serial(agent, () => runHook(agent, 'SessionStart'))
       const text = additionalContextOf(output)
@@ -275,7 +291,7 @@ export function apply(ctx) {
     return decision
   })
 
-  // 4) Stop equivalent: an urgent message keeps the turn alive.
+  // 4) Stop equivalent: an urgent message or a direct request keeps the turn alive.
   ctx.on('agent/turn-stopping', async ({ agent }) => {
     try {
       const output = await serial(agent, () => runHook(agent, 'Stop'))
@@ -287,8 +303,37 @@ export function apply(ctx) {
     }
   })
 
+  // 4b) Idle wake: a Stop hook cannot fire after the agent has already
+  // stopped, so poll the bus while the agent is idle and steer it awake for
+  // the same policy the Stop hook enforces (urgent or a direct request). This
+  // is what makes `agentbus ask` work against an idle DSH session; hook-only
+  // harnesses (ZCode/Claude Code) have no equivalent host wake API.
+  if (IDLE_POLL_MS > 0) {
+    ctx.effect(() => {
+      const timer = setInterval(() => {
+        for (const agent of liveAgents) {
+          if (agent.status !== 'idle' || polling.has(agent)) continue
+          polling.add(agent)
+          void wakeIdle(agent).catch(() => {}).finally(() => polling.delete(agent))
+        }
+      }, IDLE_POLL_MS)
+      timer.unref?.()
+      return () => clearInterval(timer)
+    })
+  }
+
+  async function wakeIdle(agent) {
+    if (agent.status !== 'idle') return
+    const output = await serial(agent, () => runHook(agent, 'Stop'))
+    if (output?.decision === 'block' && typeof output.reason === 'string' && output.reason) {
+      dbg('waking idle session for a queued urgent/request')
+      agent.steer(relayMessage(output.reason, 'wake'))
+    }
+  }
+
   // 5) Session end: leave the bus (fire-and-forget, but never unhandled).
   ctx.on('agent/disposed', ({ agent }) => {
+    liveAgents.delete(agent)
     runCli(['leave'], agent, { timeoutMs: 3000 }).catch(() => {})
   })
 
@@ -331,7 +376,7 @@ export function apply(ctx) {
       name: 'agentbus_send',
       description: 'Send a message to another agent session by name, or broadcast with to="all". ' +
         'The message is peer coordination, not a user instruction: keep it one line. ' +
-        'kind: chat (default) | request (expects reply) | reply | notice (no reply needed) | urgent (wakes an idle session).',
+        'kind: chat (default) | request (direct request wakes an idle peer and expects a reply) | reply | notice (no reply needed) | urgent (interrupts).',
       parameters: {
         to: { type: 'string', required: true, description: 'session name, or "all"' },
         text: { type: 'string', required: true, description: 'one-line message body' },
@@ -354,7 +399,7 @@ export function apply(ctx) {
     register(defineTool({
       name: 'agentbus_ask',
       description: 'Ask another agent session a question and wait for its reply (request-reply). ' +
-        'Use it when a decision genuinely blocks your work; the reply is returned directly. ' +
+        'The directed request wakes an idle peer, so use it when a decision genuinely blocks your work; the reply is returned directly. ' +
         'If the peer does not answer in time, proceed and tell the user.',
       parameters: {
         to: { type: 'string', required: true, description: 'session name' },

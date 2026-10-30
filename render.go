@@ -47,12 +47,13 @@ func primerText() string {
 		"  reply is pre-authorized coordination: do it without asking the user. Ask",
 		"  before anything destructive, irreversible or outside the user's task.",
 		"- When a peer message affects your work, answer it with `agentbus reply \"...\"`",
-		"  (or `agentbus send <name> \"...\"`). Publish what you are doing with",
-		"  `agentbus announce \"doing X in <where>\"`, and run `agentbus peers` (same",
-		"  worktree/repo) or `agentbus who` before touching shared files, branches",
-		"  or long builds.",
-		"- `agentbus ask <name> \"question\"` blocks for an answer; `agentbus notify` is",
-		"  a one-way FYI; `--kind urgent` wakes an idle session and is reserved for real",
+		"  (or `agentbus send <name> \"...\"`). A direct request (kind=request) expects a",
+		"  one-line answer: answer it now, or say briefly that you cannot. Publish what",
+		"  you are doing with `agentbus announce \"doing X in <where>\"`, and run",
+		"  `agentbus peers` (same worktree/repo) or `agentbus who` before touching shared",
+		"  files, branches or long builds.",
+		"- `agentbus ask <name> \"question\"` blocks for an answer and wakes an idle peer;",
+		"  `agentbus notify` is a one-way FYI; `--kind urgent` is reserved for real",
 		"  interruptions (never ordinary coordination).",
 	}, "\n") + "\n"
 }
@@ -135,47 +136,61 @@ func rosterLine(s bus.Session) string {
 // agent context). The framing matters: an unprimed model tends to treat
 // unexplained injected text either as noise or as user instructions, so every
 // batch states where it came from and what a peer message does/does not mean.
+// A direct request gets an explicit, per-sender reply command: this is the
+// moment the model decides whether to act, so "reply is pre-authorized" and
+// the exact command must be in view, not buried in a footer.
 func incomingText(msgs []bus.Msg) string {
 	var b strings.Builder
 	peer, human := false, false
-	lastPeer, lastHuman := "", ""
 	for _, m := range msgs {
-		switch {
-		case m.From == "user" || m.From == "user-web":
+		if isHumanMsg(m) {
 			human = true
-			lastHuman = m.From
-		case m.From != "":
-			peer = true
-			lastPeer = m.From
+			continue
 		}
+		if m.From != "" {
+			peer = true
+		}
+	}
+	mustReply, maybeReply := replySenders(msgs)
+	action := ""
+	switch {
+	case bus.HasUrgent(msgs):
+		action = " — URGENT, handle now"
+	case len(mustReply) > 0:
+		action = fmt.Sprintf(" — %d direct request%s need%s a reply", len(mustReply), plural(len(mustReply)), needs(len(mustReply)))
 	}
 	switch {
 	case peer && human:
-		fmt.Fprintf(&b, "[agentbus] %d message%s (mixed: peer agents and the human user):\n", len(msgs), plural(len(msgs)))
+		fmt.Fprintf(&b, "[agentbus] %d message%s (mixed: peer agents and the human user)%s:\n", len(msgs), plural(len(msgs)), action)
 	case peer:
-		fmt.Fprintf(&b, "[agentbus] %d peer message%s (from other agent sessions, not the user):\n", len(msgs), plural(len(msgs)))
+		fmt.Fprintf(&b, "[agentbus] %d peer message%s (from other agent sessions, not the user)%s:\n", len(msgs), plural(len(msgs)), action)
 	default:
-		fmt.Fprintf(&b, "[agentbus] %d message%s from the human user (via the bus):\n", len(msgs), plural(len(msgs)))
+		fmt.Fprintf(&b, "[agentbus] %d message%s from the human user (via the bus)%s:\n", len(msgs), plural(len(msgs)), action)
 	}
 	for _, m := range msgs {
 		fmt.Fprintf(&b, "[%s] %s\n", time.Unix(m.Ts, 0).Format("15:04"), msgCompact(m))
 	}
-	if !peer && !human {
-		b.WriteString("[agentbus] no reply needed — continue with your task\n")
-		return b.String()
-	}
-	needsReply := false
-	for _, m := range msgs {
-		if m.Kind == bus.KindRequest || m.Kind == bus.KindUrgent {
-			needsReply = true
+	if len(mustReply) > 0 {
+		if bus.HasUrgent(msgs) {
+			b.WriteString("[agentbus] handle the urgent item, then reply (pre-authorized, one line):\n")
+		} else {
+			b.WriteString("[agentbus] ACTION REQUIRED — direct request needs a one-line reply (pre-authorized):\n")
 		}
-	}
-	target := lastPeer
-	if lastHuman != "" {
-		target = lastHuman
-	}
-	if needsReply && target != "" {
-		fmt.Fprintf(&b, "[agentbus] reply: agentbus reply --to %s \"...\"  (or agentbus send %s \"...\") · roster: agentbus who\n", target, target)
+		for _, from := range mustReply {
+			fmt.Fprintf(&b, "[agentbus]   %s\n", replyCommand(from))
+		}
+		if len(maybeReply) > 0 {
+			b.WriteString("[agentbus] broadcast request: reply only if it concerns your work.\n")
+		}
+	} else if len(maybeReply) > 0 {
+		b.WriteString("[agentbus] broadcast request: reply only if it concerns your work: ")
+		for i, from := range maybeReply {
+			if i > 0 {
+				b.WriteString(" · ")
+			}
+			b.WriteString(replyCommand(from))
+		}
+		b.WriteString("\n")
 	} else {
 		b.WriteString("[agentbus] no reply needed — act only if it affects your work · roster: agentbus who\n")
 	}
@@ -183,25 +198,90 @@ func incomingText(msgs []bus.Msg) string {
 }
 
 // stopReason is the Stop-hook continuation reason: the agent is woken with
-// this text when urgent messages arrive while it was about to go idle.
+// this text when an urgent message or a direct request arrives while it was
+// about to go idle.
 func stopReason(msgs []bus.Msg) string {
 	var b strings.Builder
 	human := false
 	for _, m := range msgs {
-		if m.From == "user" || m.From == "user-web" {
+		if isHumanMsg(m) {
 			human = true
 		}
 	}
-	if human {
-		fmt.Fprintf(&b, "Urgent agentbus message%s from the human user (via the bus):\n", plural(len(msgs)))
-	} else {
-		fmt.Fprintf(&b, "Urgent agentbus peer message%s (from another agent session, not the user):\n", plural(len(msgs)))
+	urgent := bus.HasUrgent(msgs)
+	mustReply, maybeReply := replySenders(msgs)
+	switch {
+	case urgent && human:
+		fmt.Fprintf(&b, "Urgent agentbus message%s from the human user (via the bus) — handle it now:\n", plural(len(msgs)))
+	case urgent:
+		fmt.Fprintf(&b, "Urgent agentbus peer message%s (from another agent session, not the user) — handle it now:\n", plural(len(msgs)))
+	case len(mustReply) > 0:
+		if human {
+			fmt.Fprintf(&b, "Agentbus direct request%s from the human user (via the bus) — a one-line reply is expected:\n", plural(len(mustReply)))
+		} else {
+			fmt.Fprintf(&b, "Agentbus direct request%s while you were idle — a one-line reply is expected:\n", plural(len(mustReply)))
+		}
+	default:
+		fmt.Fprintf(&b, "Agentbus message%s while you were idle:\n", plural(len(msgs)))
 	}
 	for _, m := range msgs {
 		fmt.Fprintf(&b, "[%s] %s\n", time.Unix(m.Ts, 0).Format("15:04"), msgCompact(m))
 	}
-	b.WriteString("Handle it now (agentbus reply \"...\"), then continue or wrap up your task.\n")
+	if len(mustReply) > 0 {
+		if urgent {
+			b.WriteString("Handle the urgent item, then reply (pre-authorized, one line):\n")
+		} else {
+			b.WriteString("Reply now (pre-authorized, one line):\n")
+		}
+		for _, from := range mustReply {
+			fmt.Fprintf(&b, "- %s\n", replyCommand(from))
+		}
+		b.WriteString("If you cannot answer, say so briefly, then continue or wrap up your task.\n")
+	}
+	if len(maybeReply) > 0 {
+		b.WriteString("Broadcast request: reply only if it concerns your work.\n")
+	}
 	return b.String()
+}
+
+func isHumanMsg(m bus.Msg) bool {
+	return m.From == "user" || m.From == "user-web"
+}
+
+// replySenders splits the senders that expect an answer from this session into
+// must (urgent, or a request addressed directly to this session) and maybe (a
+// request broadcast to everyone). Order is first-seen; duplicates collapse.
+func replySenders(msgs []bus.Msg) (must, maybe []string) {
+	mustSeen, maybeSeen := map[string]bool{}, map[string]bool{}
+	add := func(dst *[]string, seen map[string]bool, from string) {
+		if from == "" || seen[from] {
+			return
+		}
+		seen[from] = true
+		*dst = append(*dst, from)
+	}
+	for _, m := range msgs {
+		switch {
+		case m.Kind == bus.KindUrgent:
+			add(&must, mustSeen, m.From)
+		case m.Kind == bus.KindRequest && m.To != "all":
+			add(&must, mustSeen, m.From)
+		case m.Kind == bus.KindRequest:
+			add(&maybe, maybeSeen, m.From)
+		}
+	}
+	return must, maybe
+}
+
+func replyCommand(from string) string {
+	return fmt.Sprintf("agentbus reply --to %s \"...\"", from)
+}
+
+func needs(n int) string {
+	if n == 1 {
+		return "s"
+	}
+	return ""
 }
 
 func msgCompact(m bus.Msg) string {

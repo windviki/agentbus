@@ -6,6 +6,7 @@ package web
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -21,18 +22,19 @@ import (
 var indexHTML []byte
 
 type server struct {
-	b       *bus.Bus
-	version string
-	started time.Time
-	token   string
-	baseURL string
+	b        *bus.Bus
+	version  string
+	started  time.Time
+	token    string
+	baseURL  string
+	onChange func()
 }
 
 // Start launches the dashboard/A2A listener on 127.0.0.1. It never blocks and
 // never fails the daemon: on bind error it logs and returns "". Disable with
 // AGENTBUS_WEB=0; port via AGENTBUS_WEB_PORT (default 8787); bearer token via
 // AGENTBUS_WEB_TOKEN.
-func Start(b *bus.Bus, version string, started time.Time) string {
+func Start(b *bus.Bus, version string, started time.Time, onChange func()) string {
 	if os.Getenv("AGENTBUS_WEB") == "0" {
 		return ""
 	}
@@ -46,11 +48,12 @@ func Start(b *bus.Bus, version string, started time.Time) string {
 		log.Printf("[agentbus] web disabled: %v", err)
 		return ""
 	}
-	s := &server{b: b, version: version, started: started, token: os.Getenv("AGENTBUS_WEB_TOKEN"), baseURL: "http://" + addr}
+	s := &server{b: b, version: version, started: started, token: os.Getenv("AGENTBUS_WEB_TOKEN"), baseURL: "http://" + addr, onChange: onChange}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/api/state", s.guard(s.handleState))
 	mux.HandleFunc("/api/send", s.guard(s.handleSend))
+	mux.HandleFunc("/api/delete", s.guard(s.handleDelete))
 	mux.HandleFunc("/a2a/", s.guard(s.handleA2A))
 	mux.HandleFunc("/.well-known/agent-card.json", s.guard(s.handleRootCard))
 	go func() { _ = http.Serve(ln, mux) }()
@@ -98,13 +101,14 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 type stateDTO struct {
-	OK       bool          `json:"ok"`
-	Version  string        `json:"version"`
-	Uptime   int64         `json:"uptime"`
-	Now      int64         `json:"now"`
-	WebIdent string        `json:"web_identity"`
-	Sessions []bus.Session `json:"sessions"`
-	Messages []bus.Msg     `json:"messages"`
+	OK       bool                `json:"ok"`
+	Version  string              `json:"version"`
+	Uptime   int64               `json:"uptime"`
+	Now      int64               `json:"now"`
+	WebIdent string              `json:"web_identity"`
+	Sessions []bus.Session       `json:"sessions"`
+	Messages []bus.Msg           `json:"messages"`
+	Unread   map[string][]string `json:"unread,omitempty"`
 }
 
 func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
@@ -120,14 +124,16 @@ func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
 		WebIdent: "user-web",
 		Sessions: s.b.Who(),
 		Messages: s.b.Log(100),
+		Unread:   s.b.UnreadByMessage(),
 	})
 }
 
 type sendDTO struct {
-	To   string `json:"to"`
-	Body string `json:"body"`
-	Kind string `json:"kind"`
-	From string `json:"from"`
+	To      string `json:"to"`
+	Body    string `json:"body"`
+	Kind    string `json:"kind"`
+	From    string `json:"from"`
+	ReplyTo string `json:"replyTo,omitempty"`
 }
 
 func (s *server) handleSend(w http.ResponseWriter, r *http.Request) {
@@ -144,14 +150,49 @@ func (s *server) handleSend(w http.ResponseWriter, r *http.Request) {
 	if bus.NormName(from) == "" {
 		from = "user-web"
 	}
-	m, n, dup, err := s.b.Send(from, in.To, in.Body, in.Kind, "")
+	m, n, dup, err := s.b.Send(from, in.To, in.Body, in.Kind, in.ReplyTo)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	if s.onChange != nil {
+		s.onChange()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "messageId": m.ID, "recipients": n, "dup": dup,
 	})
+}
+
+type deleteDTO struct {
+	MessageID string `json:"messageId"`
+}
+
+// handleDelete discards a message that is still unread in at least one
+// inbox. Read history is intentionally immutable here: the dashboard offers
+// deletion for stale pending mail, not for rewriting delivered messages.
+func (s *server) handleDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var in deleteDTO
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad json: " + err.Error()})
+		return
+	}
+	n, err := s.b.DeleteMessage(in.MessageID)
+	if err != nil {
+		code := http.StatusBadRequest
+		if errors.Is(err, bus.ErrNotUnread) {
+			code = http.StatusConflict
+		}
+		writeJSON(w, code, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if s.onChange != nil {
+		s.onChange()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": n})
 }
 
 // --- A2A boundary ------------------------------------------------------------

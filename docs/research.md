@@ -63,7 +63,7 @@ unix-socket daemon（来自 amp-skill），补上我们独有的部分：
 
 - 跨 CLI 的身份协议（session_id → 唯一名，`/proc` 祖先探测兜底）；
 - 存在感 + 状态公告（"bob 正在 XXX"）；
-- 四个投递时机（SessionStart 名册 / PostToolUse 工作中 / UserPromptSubmit 回合开始 / Stop 仅 urgent 唤醒）；
+- 四个投递时机（SessionStart 名册 / PostToolUse 工作中 / UserPromptSubmit 回合开始 / Stop 对 urgent 与定向 request 唤醒）；
 - PID 级 liveness 与墓碑式名字回收；
 - 限速 + 去重防 agent 对话风暴；
 - daemon 自动拉起与原子状态持久化；

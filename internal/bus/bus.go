@@ -20,6 +20,7 @@ var (
 	ErrNameTaken      = errors.New("name taken")
 	ErrRateLimited    = errors.New("rate limited")
 	ErrBadInput       = errors.New("bad input")
+	ErrNotUnread      = errors.New("message is not unread")
 )
 
 const (
@@ -42,13 +43,19 @@ type Msg struct {
 	From    string `json:"from"`
 	To      string `json:"to"` // session name or "all"
 	Kind    string `json:"kind,omitempty"`
-	Body    string `json:"body"`
-	Ts      int64  `json:"ts"`
+	// Recipients is how many inboxes the message reached (1 for a direct
+	// message or the human side, N for a broadcast). The dashboard uses it to
+	// show the difference between a broadcast and a one-to-one message.
+	Recipients int    `json:"recipients,omitempty"`
+	Body       string `json:"body"`
+	Ts         int64  `json:"ts"`
 }
 
 // Message kinds — they drive delivery behaviour (see docs/design.md "delivery
-// ladder"): only Urgent may wake an idle session via the Stop hook; the rest
-// are injected at the next natural boundary (next tool call / next prompt).
+// ladder"): urgent, and a request addressed directly to one session, may wake
+// an idle session via the Stop hook; chat, notice, reply and broadcast
+// requests are injected at the next natural boundary (next tool call / next
+// prompt).
 const (
 	KindChat    = "chat"    // default conversation message
 	KindRequest = "request" // expects an answer (agentbus ask)
@@ -69,6 +76,25 @@ func ValidKind(k string) bool {
 func HasUrgent(msgs []Msg) bool {
 	for _, m := range msgs {
 		if m.Kind == KindUrgent {
+			return true
+		}
+	}
+	return false
+}
+
+// WakesIdle reports whether a queued batch should interrupt an idle session
+// named name. Urgent messages always wake. A request wakes only when it is
+// addressed directly to this session: asking one specific peer a question
+// implies an answer is needed even if that peer has already stopped. Broadcast
+// requests deliberately do not wake every idle session — N wakes for one
+// message is expensive, and a request storm is worse than a slow answer.
+func WakesIdle(msgs []Msg, name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	for _, m := range msgs {
+		if m.Kind == KindUrgent {
+			return true
+		}
+		if name != "" && m.Kind == KindRequest && m.To != "all" && strings.EqualFold(m.To, name) {
 			return true
 		}
 	}
@@ -317,6 +343,13 @@ func (b *Bus) Send(from, to, body, kind, replyTo string) (Msg, int, bool, error)
 		}
 		targets = []*Session{t}
 	}
+	// Record the audience once, so every copy (inbox, recent log, state.json,
+	// dashboard) agrees on broadcast vs one-to-one.
+	if human {
+		m.Recipients = 1
+	} else {
+		m.Recipients = len(targets)
+	}
 	for _, t := range targets {
 		q := append(b.inbox[t.Name], m)
 		if len(q) > InboxCap {
@@ -504,6 +537,87 @@ func (b *Bus) Log(n int) []Msg {
 		out[i], out[j] = out[j], out[i]
 	}
 	return out
+}
+
+// UnreadByMessage returns, for each message still sitting in at least one
+// session inbox, the names of those sessions. A copy in "mine" has already
+// been delivered (read) and does not count. The dashboard uses this to mark
+// pending mail as unread and to decide what may be deleted.
+func (b *Bus) UnreadByMessage() map[string][]string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.reapLocked()
+	out := map[string][]string{}
+	for name, q := range b.inbox {
+		for _, m := range q {
+			out[m.ID] = append(out[m.ID], name)
+		}
+	}
+	for _, names := range out {
+		sort.Strings(names)
+	}
+	return out
+}
+
+// DeleteMessage removes a message that is still unread in at least one inbox.
+// It removes every unread copy, the recently-delivered copies, and the global
+// history entry, so the dashboard can discard stale pending mail without
+// leaving a reply target behind. Already-delivered messages are refused:
+// deletion is for unread pending mail, not for rewriting read history.
+func (b *Bus) DeleteMessage(id string) (int, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return 0, fmt.Errorf("%w: empty message id", ErrBadInput)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.reapLocked()
+
+	removed := 0
+	for name, q := range b.inbox {
+		kept := q[:0]
+		for _, m := range q {
+			if m.ID == id {
+				removed++
+				continue
+			}
+			kept = append(kept, m)
+		}
+		if len(kept) == 0 {
+			delete(b.inbox, name)
+		} else {
+			b.inbox[name] = kept
+		}
+	}
+	if removed == 0 {
+		return 0, fmt.Errorf("%w: %s (already delivered or unknown)", ErrNotUnread, id)
+	}
+	for name, q := range b.mine {
+		kept := q[:0]
+		for _, m := range q {
+			if m.ID != id {
+				kept = append(kept, m)
+			}
+		}
+		if len(kept) == 0 {
+			delete(b.mine, name)
+		} else {
+			b.mine[name] = kept
+		}
+	}
+	keptRecent := b.recent[:0]
+	for _, m := range b.recent {
+		if m.ID != id {
+			keptRecent = append(keptRecent, m)
+		}
+	}
+	b.recent = keptRecent
+	for k, d := range b.dup {
+		if d.m.ID == id {
+			delete(b.dup, k)
+		}
+	}
+	return removed, nil
 }
 
 // Reap forces a liveness pass (also run lazily inside most ops).

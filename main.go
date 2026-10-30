@@ -484,16 +484,17 @@ func cmdHook(args []string) int {
 			fmt.Print(hookContextJSON(h.EventName, incomingText(msgs)))
 		}
 	case "Stop":
-		// Delivery ladder: an idle session is only woken by urgent messages
-		// (AGENTBUS_WAKE=all restores wake-on-anything). Peek first so
-		// non-urgent messages stay queued for the next natural boundary
-		// (next prompt / next tool call) instead of being consumed here.
+		// Delivery ladder: an idle session is woken by urgent messages and by
+		// requests addressed directly to it (a question needs an answer).
+		// AGENTBUS_WAKE=urgent restores the old urgent-only ladder;
+		// AGENTBUS_WAKE=all wakes on anything. Peek first so messages that do
+		// not qualify stay queued for the next natural boundary.
 		peek := false
 		resp, err := client.Call(home, true, proto.Request{Op: "poll", ID: key, Ack: &peek})
 		if err != nil || !resp.Ok || len(resp.Messages) == 0 {
 			return 0
 		}
-		if !bus.HasUrgent(resp.Messages) && os.Getenv("AGENTBUS_WAKE") != "all" {
+		if !shouldWakeIdle(resp.Messages, resp.Name) {
 			return 0
 		}
 		take := true
@@ -513,6 +514,34 @@ func cmdHook(args []string) int {
 		_, _ = client.Call(home, true, proto.Request{Op: "leave", ID: key})
 	}
 	return 0
+}
+
+// wakeMode interprets AGENTBUS_WAKE. Default ("request") wakes an idle session
+// for urgent messages and direct requests; "urgent" keeps the old urgent-only
+// behavioural; "all" wakes for any message.
+func wakeMode() string {
+	switch mode := strings.ToLower(strings.TrimSpace(os.Getenv("AGENTBUS_WAKE"))); mode {
+	case "urgent":
+		return "urgent"
+	case "all":
+		return "all"
+	default:
+		return "request"
+	}
+}
+
+// shouldWakeIdle decides whether the Stop hook may interrupt an idle session.
+// Keep the policy in one place: the hook calls it, and the injected text
+// (stopReason / incomingText) explains exactly what the model should do.
+func shouldWakeIdle(msgs []bus.Msg, name string) bool {
+	switch wakeMode() {
+	case "all":
+		return len(msgs) > 0
+	case "urgent":
+		return bus.HasUrgent(msgs)
+	default:
+		return bus.WakesIdle(msgs, name)
+	}
 }
 
 // pollForHook polls once; if the daemon forgot us (state wiped), it silently
@@ -770,7 +799,13 @@ func cmdSend(args []string) int {
 	case resp.Dup:
 		fmt.Println("[agentbus] identical message sent moments ago — suppressed")
 	case to == "all" || to == "#all":
-		fmt.Printf("[agentbus] broadcast delivered to %d session(s)\n", resp.Recipients)
+		if strings.EqualFold(*kind, "request") {
+			fmt.Printf("[agentbus] broadcast request delivered to %d session(s) — replies are optional and it will not wake idle sessions\n", resp.Recipients)
+		} else {
+			fmt.Printf("[agentbus] broadcast delivered to %d session(s)\n", resp.Recipients)
+		}
+	case strings.EqualFold(*kind, "request"):
+		fmt.Printf("[agentbus] request delivered to '%s' (a reply is expected; an idle peer is woken)\n", strings.ToLower(to))
 	default:
 		fmt.Printf("[agentbus] delivered to '%s'\n", strings.ToLower(to))
 	}
@@ -807,7 +842,7 @@ func cmdAsk(args []string) int {
 		return fail("%s", resp.Error)
 	}
 	if len(resp.Messages) == 0 {
-		fmt.Printf("[agentbus] no reply from '%s' within %ds — proceed; check later with: agentbus inbox --peek\n",
+		fmt.Printf("[agentbus] no reply from '%s' within %ds — the request stays queued; a directed request wakes an idle peer, so it may be busy or not running hooks. Check `agentbus who`, then carry on and read any late answer with `agentbus inbox --peek`.\n",
 			strings.ToLower(to), *waitS)
 		return 1
 	}

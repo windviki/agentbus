@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"errors"
 	"regexp"
 	"strings"
 	"sync"
@@ -301,6 +302,143 @@ func TestKinds(t *testing.T) {
 	}
 	if HasUrgent([]Msg{{Kind: KindChat}}) {
 		t.Fatal("chat must not count as urgent")
+	}
+}
+
+func TestWakesIdle(t *testing.T) {
+	direct := Msg{From: "alice", To: "bob", Kind: KindRequest}
+	broadcast := Msg{From: "alice", To: "all", Kind: KindRequest}
+	chat := Msg{From: "alice", To: "bob", Kind: KindChat}
+	reply := Msg{From: "alice", To: "bob", Kind: KindReply}
+	urgent := Msg{From: "alice", To: "all", Kind: KindUrgent}
+
+	cases := []struct {
+		name string
+		msgs []Msg
+		want bool
+	}{
+		{"direct request wakes", []Msg{direct}, true},
+		{"uppercase To still wakes", []Msg{{From: "alice", To: "BOB", Kind: KindRequest}}, true},
+		{"broadcast request does not wake", []Msg{broadcast}, false},
+		{"chat does not wake", []Msg{chat}, false},
+		{"reply does not wake", []Msg{reply}, false},
+		{"urgent broadcast wakes", []Msg{urgent}, true},
+		{"request for someone else does not wake bob", []Msg{{From: "alice", To: "carol", Kind: KindRequest}}, false},
+		{"one qualifying message in a batch is enough", []Msg{chat, direct}, true},
+		{"empty batch", nil, false},
+	}
+	for _, tc := range cases {
+		if got := WakesIdle(tc.msgs, "bob"); got != tc.want {
+			t.Errorf("%s: WakesIdle = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	if WakesIdle([]Msg{direct}, "") {
+		t.Error("empty recipient name must not match a direct request")
+	}
+}
+
+func TestSendRecipients(t *testing.T) {
+	b, _ := newTestBus()
+	b.Register("sid:a", "alice", "", "", "", 0, "")
+	b.Register("sid:b", "bob", "", "", "", 0, "")
+	b.Register("sid:c", "carol", "", "", "", 0, "")
+
+	direct, _, _, err := b.Send("alice", "bob", "one to one", KindRequest, "")
+	if err != nil || direct.Recipients != 1 {
+		t.Fatalf("direct recipients: %v %d", err, direct.Recipients)
+	}
+	broadcast, _, _, err := b.Send("alice", "all", "everyone", KindChat, "")
+	if err != nil || broadcast.Recipients != 2 {
+		t.Fatalf("broadcast recipients: %v %d", err, broadcast.Recipients)
+	}
+	human, n, _, err := b.Send("alice", "user", "for the human", KindReply, "")
+	if err != nil || human.Recipients != 1 || n != 1 {
+		t.Fatalf("human recipients: %v %d n=%d", err, human.Recipients, n)
+	}
+	// The same audience is visible in the global log the dashboard reads.
+	log := b.Log(3)
+	if len(log) != 3 || log[0].Recipients != 1 || log[1].Recipients != 2 || log[2].Recipients != 1 {
+		t.Fatalf("log recipients mismatch: %+v", log)
+	}
+}
+
+func TestDeleteUnreadMessage(t *testing.T) {
+	b, _ := newTestBus()
+	b.Register("sid:a", "alice", "", "", "", 0, "")
+	b.Register("sid:b", "bob", "", "", "", 0, "")
+	b.Register("sid:c", "carol", "", "", "", 0, "")
+
+	req, _, _, err := b.Send("alice", "bob", "delete me", KindRequest, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A peek is not delivery: the message is still unread.
+	if _, _, err := b.Poll("sid:b", false, 0); err != nil {
+		t.Fatal(err)
+	}
+	unread := b.UnreadByMessage()
+	if len(unread[req.ID]) != 1 || unread[req.ID][0] != "bob" {
+		t.Fatalf("unread map: %+v", unread)
+	}
+	n, err := b.DeleteMessage(req.ID)
+	if err != nil || n != 1 {
+		t.Fatalf("delete unread: n=%d err=%v", n, err)
+	}
+	if msgs, _, _ := b.Poll("sid:b", true, 0); len(msgs) != 0 {
+		t.Fatalf("deleted message reappeared: %+v", msgs)
+	}
+	if log := b.Log(5); len(log) != 0 {
+		t.Fatalf("deleted message stayed in history: %+v", log)
+	}
+	if len(b.UnreadByMessage()) != 0 {
+		t.Fatal("unread map should be empty after delete")
+	}
+
+	// Once delivered, the message is read history and must not be deleted.
+	read, _, _, err := b.Send("alice", "bob", "read once", KindRequest, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := b.Poll("sid:b", true, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.DeleteMessage(read.ID); !errors.Is(err, ErrNotUnread) {
+		t.Fatalf("read message delete should be refused, got %v", err)
+	}
+	if _, err := b.DeleteMessage("missing"); !errors.Is(err, ErrNotUnread) {
+		t.Fatalf("unknown message delete should be refused, got %v", err)
+	}
+}
+
+func TestDeleteUnreadBroadcast(t *testing.T) {
+	b, _ := newTestBus()
+	b.Register("sid:a", "alice", "", "", "", 0, "")
+	b.Register("sid:b", "bob", "", "", "", 0, "")
+	b.Register("sid:c", "carol", "", "", "", 0, "")
+	msg, _, _, err := b.Send("alice", "all", "broadcast delete", KindNotice, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Bob reads his copy; Carol leaves hers unread.
+	if _, _, err := b.Poll("sid:b", true, 0); err != nil {
+		t.Fatal(err)
+	}
+	unread := b.UnreadByMessage()
+	if len(unread[msg.ID]) != 1 || unread[msg.ID][0] != "carol" {
+		t.Fatalf("broadcast unread map: %+v", unread)
+	}
+	n, err := b.DeleteMessage(msg.ID)
+	if err != nil || n != 1 {
+		t.Fatalf("delete broadcast: n=%d err=%v", n, err)
+	}
+	if msgs, _, _ := b.Poll("sid:c", true, 0); len(msgs) != 0 {
+		t.Fatalf("carol still has deleted broadcast: %+v", msgs)
+	}
+	if mine, _, _ := b.Mine("sid:b"); len(mine) != 0 {
+		t.Fatalf("bob's delivered copy should be dropped too: %+v", mine)
+	}
+	if log := b.Log(5); len(log) != 0 {
+		t.Fatalf("deleted broadcast stayed in history: %+v", log)
 	}
 }
 

@@ -23,7 +23,7 @@ agent 会话里最贵的资源是上下文窗口。四种集成方式的空闲�
 | MCP server（工具集） | **每会话常驻约 200–500 token**（schema 始终在系统提示里） | 需 agent 主动调工具轮询 |
 | skill + 约定轮询 | ~30 token（skill 描述行；Claude 的 plugin 详情实测整套约 86） | 取决于 agent 自觉 |
 | 文件信箱 + UserPromptSubmit hook（claude-session-bus 方案） | 0 | **下一次用户提交 prompt 才送达**（可能几小时） |
-| **agentbus：hook 全时机投递** | **0**（hook 空手退出，host 不注入任何内容） | 工作中：下一个工具调用；空闲：Stop 唤醒 |
+| **agentbus：hook 全时机投递** | **0**（hook 空手退出，host 不注入任何内容） | 工作中：下一个工具调用；空闲：urgent / 定向 request 经 Stop 唤醒 |
 
 结论：**hook 是唯一"空闲零成本 + 近实时"的通道**。MCP 做 facade 可以，底座不行。
 
@@ -32,7 +32,7 @@ agent 会话里最贵的资源是上下文窗口。四种集成方式的空闲�
 - join 名册注入：约 30 + 20/其他会话（一次性）；
 - 每条收到的消息：约 15 + 消息本体；
 - `announce` / `send`：各一次 Bash 调用（~25 out + ~15 in）；
-- 空闲且无消息：**0**（hook 打印空串，host 什么都不注入）。
+- 空闲且无消息：**0**（hook 打印空串，host 什么都不注入）；收到定向 request 或 urgent 时才花一次唤醒。
 
 ## 3. 架构
 
@@ -99,13 +99,14 @@ agent 会话里最贵的资源是上下文窗口。四种集成方式的空闲�
 
 ## 5. 消息模型与投递梯子
 
-消息是 `{messageId, from, to, kind, body, ts, replyTo}`。字段名向 A2A 的
-message envelope 靠拢（`messageId` / `replyTo` / `kind`），HTTP 边界可无损映射。
+消息是 `{messageId, from, to, kind, body, ts, replyTo, recipients}`。字段名向 A2A
+的 message envelope 靠拢（`messageId` / `replyTo` / `kind`），HTTP 边界可无损映射；
+`recipients` 记录实际投递到的会话数（单点为 1，广播为 N），供看板区分广播/单点。
 
 | kind | 语义 | 唤醒空闲会话 |
 |---|---|---|
 | `chat`（默认） | 普通对话 | 否 |
-| `request` | 期待答复；`agentbus ask` 自动发送 | 否 |
+| `request` | 期待答复；`agentbus ask` 自动发送 | **定向：是**；广播：否 |
 | `reply` | 对 request 的答复，`replyTo` 指向原消息 | 否 |
 | `notice` | 单向下行通知；`agentbus notify` | 否 |
 | `urgent` | 人类中断 / 紧急协作 | **是** |
@@ -113,6 +114,20 @@ message envelope 靠拢（`messageId` / `replyTo` / `kind`），HTTP 边界可�
 `ask` 的答复消费：daemon 的 `ask` op 发完 request 后在调用者收件箱里等"来自
 对端的第一条消息"并**取走**（`TakeFrom`），所以答复不会被后续 hook 再投一次；
 其它消息原样留在队列里，仍按梯子投递。
+
+**定向 request 唤醒**：一条 `to=<本会话>` 的 request 是明确向这个 peer 提问；
+发送方通常在自己的回合里等待，而目标可能已经停在 prompt 上。旧的 urgent-only
+梯子会让目标一直等到用户下次输入，`ask` 只能超时。因此 Stop hook 的唤醒条件扩展为 urgent +
+定向 request，并在注入文本里给出每个 sender 的 `agentbus reply --to …` 命令（标注
+"pre-authorized"）。广播 request 仍不唤醒：一条广播叫醒所有空闲会话既贵又容易形成
+request 风暴；它按自然边界送达，收到者按相关性决定是否回复。
+
+还有一个 Stop 无法覆盖的窗口：会话已经停在 prompt 之后才到达的 request——此时宿主
+不会再触发 Stop。DSH 原生插件在 agent `idle` 时每 5s 用同一套 Stop 策略 peek 一次
+（`AGENTBUS_DSH_POLL_MS`，默认 5000，0 关闭），命中 urgent/定向 request 就
+`agent.steer()`；DSH 文档明确 idle 的 steer 会开一个新回合，消息在 steer 前已 ack，
+不会重复投递。纯 hook 的 ZCode / Claude Code 没有这个宿主 API，仍受"只能在下一次
+自然边界看到消息"的限制。
 
 `reply` 的答复对象：daemon 从已投递缓存、未 ack 的收件箱（`inbox --peek`）和
 持久化历史中选最新的一条可寻址消息（在线对端，或人类 `user`/`user-web`；跳过
@@ -128,7 +143,7 @@ message envelope 靠拢（`messageId` / `replyTo` / `kind`），HTTP 边界可�
 | `SessionStart` | 刚启动 | 注册 + 注入**会话契约（primer）+ 名册**——既告诉它"谁在做 XXX"，也告诉它"这些消息是什么、该怎么回应" |
 | `PostToolUse`（任意工具） | 工作中 | poll：有信则 `additionalContext` 注入，无信静默 |
 | `UserPromptSubmit` | 回合开始 | 同上（补齐用户不在时错过的） |
-| `Stop` | 即将空闲 | **先 peek**：仅当队列含 urgent 才 `{"decision":"block","reason":…}` 唤醒并 flush 队列；否则保持静默，消息留到下一个自然边界 |
+| `Stop` | 即将空闲 | **先 peek**：队列含 urgent 或**定向 request** 才 `{"decision":"block","reason":…}` 唤醒并 flush 队列；否则保持静默，消息留到下一个自然边界 |
 | `SessionEnd` | 退出 | `leave`（ZCode 无此事件，靠 PID 回收） |
 
 工作区发现：SessionStart 名册不是一股脑的全局列表，而是按**同一 worktree**
@@ -138,14 +153,16 @@ message envelope 靠拢（`messageId` / `replyTo` / `kind`），HTTP 边界可�
 一堆无关会话里猜。Kimi 的 SessionStart stdout 不会被注入，因此它的首个
 UserPromptSubmit 会补一次同样的 workspace 名册（每会话只注入一次）。
 
-`AGENTBUS_WAKE=all` 恢复"任意消息都可唤醒"的旧行为。poll 即 ack（消息只投
-一次），ack 后保留最近 5 条供 `inbox --peek` 复读。注入文本保持紧凑
-（见 render.go），并显式标注来源与可回复动作：
+`AGENTBUS_WAKE=urgent` 退回仅 urgent 的旧行为，`AGENTBUS_WAKE=all` 让任意消息
+都可唤醒。poll 即 ack（消息只投一次），ack 后保留最近 5 条供 `inbox --peek` 复读。
+注入文本保持紧凑（见 render.go），并显式标注来源与可回复动作；定向 request 在
+header 与 footer 都强调要回一句：
 
 ```
-[agentbus] 1 peer message (from other agent sessions, not the user):
+[agentbus] 1 peer message (from other agent sessions, not the user) — 1 direct request needs a reply:
 [14:32] [request] yarrow-yak→bob: starting tag-import refactor - does it overlap your filter UI work?
-[agentbus] reply: agentbus reply "..."  (or agentbus send yarrow-yak "...") · roster: agentbus who
+[agentbus] ACTION REQUIRED — direct request needs a one-line reply (pre-authorized):
+[agentbus]   agentbus reply --to yarrow-yak "..."
 ```
 
 为什么必须做这层 framing、未铺垫的会话会怎么处理注入文本、以及"愿不愿意用"
@@ -156,10 +173,19 @@ UserPromptSubmit 会补一次同样的 workspace 名册（每会话只注入一�
 `internal/web` 在 daemon 启动时监听 `127.0.0.1:8787`（`AGENTBUS_WEB_PORT`
 可改），与 unix socket 共用同一个 `*bus.Bus`，没有第二份状态：
 
-- `GET /`：内嵌 HTML 看板（会话、消息流、kind 下拉、⚠ interrupt 按钮）。
+- `GET /`：内嵌 HTML 看板。会话按 **repo → worktree** 分组；每条消息带
+  📢 广播 / 🎯 单点 标签、广播实际收件人数和工作区标签；request 显示
+  「待回复 / 已回复」，待回复的定向 request 在 header 计数并在会话行挂 ⏳；
+  未读的 pending request 带「未读 N」和删除按钮；顶部可筛选 全部 / 广播 /
+  单点 / 待回复，单点 reply 会自动带 replyTo。底部是独立的「收发日志」面板，
+  有自己的滚动区，不随上方阅读面板的筛选变化。
   页面内所有请求用相对路径 `./api/…`，因此放在 code-server 的
   `/proxy/8787/` 下无需改写；
-- `GET /api/state`、`POST /api/send`：看板的后端，也是脚本化入口；
+- `GET /api/state`、`POST /api/send`、`POST /api/delete`：看板的后端，也是
+  脚本化入口；`/api/send` 接受 `replyTo`，供看板的「回复」按钮使用；
+  `/api/delete` 只删除仍有未读副本的消息（从未读收件箱、mine 缓存和全局
+  日志中移除），已读历史不可改写；`/api/state` 额外返回
+  `unread: {messageId: [未读会话名]}`，供界面区分「未读 / 已读未回」；
 - A2A 子集：根 Agent Card、`/a2a/<name>/.well-known/agent-card.json`、
   `POST /a2a/<name>` 的 JSON-RPC 2.0 `message/send`（只支持 text parts，
   `metadata.agentbus.kind` 映射消息类型；未知方法返回 `-32601`）。
@@ -193,8 +219,9 @@ hook 的"空闲零成本"严格更优（MCP schema 常驻上下文）。
 1. **限速**：每会话 20 msg/min，超限报错（错误文本提示"暂停并总结"）；
 2. **去重**：60s 内相同 from/to/body 的重复发送直接吞掉（也防 Bash 工具重试双发）；
 3. **宿主限制**：ZCode 的 Stop 延续最多 3 次；skill 明文"每主题最多 ~3 个来回"；
-4. **消息分级**：只有 urgent 能触发 Stop 唤醒，chat/request/notice 天然不会
-   造成"互相唤醒"的循环。
+4. **消息分级**：只有 urgent 与**定向 request** 能触发 Stop 唤醒；chat、notice、
+   reply、广播 request 都留在自然边界。reply 不唤醒，所以"请求→答复"不会形成
+   自动往复；定向 request 只叫醒一个 peer，且受后续 reply 不唤醒与 ~3 回合限制约束。
 
 ## 9. 可靠性
 
@@ -220,7 +247,7 @@ hook 的"空闲零成本"严格更优（MCP schema 常驻上下文）。
 |---|---|---|
 | claude code | hooks + skill，或 plugin 包 | 名册 / 工作中 / 回合开始 / 空闲唤醒 / 退出清理 |
 | zcode | hooks + skill（配置需 `hooks.enabled:true`；plugin 自带无需开关），或 plugin 包 | 同上 minus 退出（PID 回收） |
-| dsh | 原生 Cordis 插件（`integrations/dsh/plugin`） | 名册/契约、回合边界、工具调用后；urgent 经 `agent.turn-stopping` steer 唤醒 |
+| dsh | 原生 Cordis 插件（`integrations/dsh/plugin`） | 名册/契约、回合边界、工具调用后；urgent / 定向 request 经 `agent.turn-stopping` steer 唤醒，idle agent 由 5s 轮询 steer 唤醒 |
 | kimi / 其他 | skill only，或 `agentbus mcp`（身份走 /proc 祖先） | 主动：who/announce/inbox（`--wait` 长轮询） |
 | 人类 / 外部系统 | Web 看板、`/api/send`、A2A `message/send` | 看板实时；A2A 同步返回 |
 
@@ -235,7 +262,7 @@ hook 的"空闲零成本"严格更优（MCP schema 常驻上下文）。
 | hook 输出非法 JSON | 不会发生：固定模板，空结果零输出 |
 | 看板端口被占 | 只记日志，总线与 hook 照常；`status` 不显示 web 地址 |
 | A2A 未知方法 | JSON-RPC `-32601`，连接不断 |
-| `ask` 等不到答复 | 退出码 1 + 提示 `inbox --peek` 稍后取，不阻塞会话 |
+| `ask` 等不到答复 | 退出码 1 + 提示对端可能忙/未装 hook，`inbox --peek` 稍后取，不阻塞会话 |
 | `reply` 没有可回复的对端 | 明确报错并提示改用 `send <name>`；不会误发给人类或已离开的会话 |
 | MCP 客户端发 notification | 无 id 直接忽略（JSON-RPC 语义） |
 

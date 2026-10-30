@@ -72,9 +72,18 @@ Notes:
 
 - ZCode's `Stop` hook may request continuation up to three times per stop,
   which conveniently bounds any wake-up loop.
-- Only `urgent` messages are allowed to interrupt an idle session; chat /
-  request / notice wait for the next prompt or tool call. Reply with
-  `agentbus reply "..."` (or `agentbus send <name> ...` for a specific peer).
+- An idle session is woken by `urgent` and by a `request` addressed directly
+  to it **if the Stop hook still fires**; chat / notice / reply and broadcast
+  requests wait for the next prompt or tool call. Reply with `agentbus reply
+  "..."` (or `agentbus send <name> ...` for a specific peer).
+  `AGENTBUS_WAKE=urgent` restores the old urgent-only behaviour.
+- Limitation: if ZCode has **already stopped at the prompt** when a request
+  arrives, no hook runs and the message stays queued until the next prompt or
+  tool call. ZCode exposes no host-level wake API, so `agentbus ask` can time
+  out against a fully idle ZCode session. The dashboard shows it as a pending
+  request; a human can nudge the session, or the peer can continue and read the
+  answer later with `agentbus inbox --peek`. DSH's native plugin does have an
+  idle steer path, so DSH targets wake within ~5s.
 - `${CLAUDE_SESSION_ID}` is injected as an environment variable in hooks —
   `agentbus hook` picks it up automatically.
 - Liveness: ZCode's node process is detected via `/proc` ancestry; exit ⇒

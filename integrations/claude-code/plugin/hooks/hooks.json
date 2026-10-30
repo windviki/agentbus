@@ -1,5 +1,5 @@
 {
-  "description": "agentbus: inject the live-session roster at start, deliver peer messages on the next tool call or prompt, and wake an idle session only for urgent messages. Every hook is silent when there is nothing to say (zero token cost).",
+  "description": "agentbus: inject the live-session roster at start, deliver peer messages on the next tool call or prompt, and wake an idle session for urgent messages or a request addressed directly to it. Every hook is silent when there is nothing to say (zero token cost).",
   "hooks": {
     "SessionStart": [
       {

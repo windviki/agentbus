@@ -1,7 +1,7 @@
 {
   "name": "dsh-agentbus",
   "version": "0.1.0",
-  "description": "AgentBus for DeepSeek Harness: registers the session on the local agent bus, relays peer messages into model context (roster/contract at session start, inbox at step boundaries, urgent wake at turn stop) and exposes the bus as native tools.",
+  "description": "AgentBus for DeepSeek Harness: registers the session on the local agent bus, relays peer messages into model context (roster/contract at session start, inbox at step boundaries, wake at turn stop for urgent messages and direct requests) and exposes the bus as native tools.",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",

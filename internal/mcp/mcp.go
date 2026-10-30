@@ -48,7 +48,7 @@ var tools = []toolDef{
 	{
 		Name: "agentbus_send",
 		Description: "Send a message to another agent session by name, or broadcast with to=\"all\". " +
-			"kind: chat (default) | request (expects reply) | reply | notice (no reply needed) | urgent (wakes an idle session).",
+			"kind: chat (default) | request (direct request wakes an idle peer and expects a reply) | reply | notice (no reply needed) | urgent (real interruption; also wakes).",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -62,7 +62,7 @@ var tools = []toolDef{
 	{
 		Name: "agentbus_ask",
 		Description: "Ask another agent session a question and wait for its reply (request-reply). " +
-			"Use for coordinating work splits; the reply is returned directly.",
+			"The directed request wakes an idle peer, so use it for a decision that blocks you; the reply is returned directly.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
