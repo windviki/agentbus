@@ -1,0 +1,22 @@
+{
+  "name": "agentbus-cli-linux-x64",
+  "version": "0.1.0",
+  "description": "Prebuilt agentbus binary for linux x64.",
+  "homepage": "https://github.com/windviki/agentbus",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/windviki/agentbus.git",
+    "directory": "npm/platform/linux-x64"
+  },
+  "license": "MIT",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/agentbus",
+    "LICENSE"
+  ]
+}

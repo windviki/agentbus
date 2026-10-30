@@ -1,162 +1,206 @@
-# agentbus 设计文档
+# agentbus design
 
-## 1. 目标与非目标
+## 1. Goals and non-goals
 
-**目标**：让同一台机器上并行工作的 AI CLI agent 会话（claude code / zcode /
-kimi / dsh / opencode / ...）互相发现、互相发消息、协商分工，从而：
+**Goals**: let AI CLI agent sessions working in parallel on the same machine
+(Claude Code / ZCode / Kimi / DSH / opencode / ...) discover each other,
+message each other, and negotiate a division of work, so that:
 
-- 新会话开局就能看到"bob 正在修 auth"，避免撞车；
-- 撞车风险出现时，agent 之间自己协商（"我做 handler，你做测试"）；
-- **用户不需要手动打断 bob 告诉他有并发会话**——这就是全部目的。
+- a new session sees from the start that "bob is fixing auth", avoiding
+  collisions;
+- when a collision risk appears, the agents negotiate among themselves ("I take
+  the handler, you take the tests");
+- **the user does not need to interrupt bob to tell him a session is running in
+  parallel** — that is the whole point.
 
-**非目标（v1）**：跨机器组网、消息持久投递保证（at-least-once 跨重启）、
-多用户鉴权、任务编排（谁给谁派活）——我们只做"对等消息 + 存在感"。v1 末尾
-补了三个本地边界：Web 看板、A2A 子集、stdio MCP facade；它们都只是同一份
-总线状态的只读/写入视图，不引入新的语义。
+**Non-goals (v1)**: cross-machine networking, guaranteed durable message
+delivery (at-least-once across restarts), multi-user authentication, task
+orchestration (who assigns work to whom) — we only do "peer messages +
+presence". At the end of v1 we added three local boundaries: the Web dashboard,
+the A2A subset and the stdio MCP facade; they are all just read-only or write
+views of the same bus state and introduce no new semantics.
 
-## 2. 核心洞察：token 经济学
+## 2. Core insight: token economics
 
-agent 会话里最贵的资源是上下文窗口。四种集成方式的空闲成本：
+The most expensive resource in an agent session is the context window. The idle
+cost of four integration approaches:
 
-| 方式 | 空闲时上下文开销 | 消息到达延迟 |
+| Approach | Idle context cost | Message delivery latency |
 |---|---|---|
-| MCP server（工具集） | **每会话常驻约 200–500 token**（schema 始终在系统提示里） | 需 agent 主动调工具轮询 |
-| skill + 约定轮询 | ~30 token（skill 描述行；Claude 的 plugin 详情实测整套约 86） | 取决于 agent 自觉 |
-| 文件信箱 + UserPromptSubmit hook（claude-session-bus 方案） | 0 | **下一次用户提交 prompt 才送达**（可能几小时） |
-| **agentbus：hook 全时机投递** | **0**（hook 空手退出，host 不注入任何内容） | 工作中：下一个工具调用；空闲：urgent / 定向 request 经 Stop 唤醒 |
+| MCP server (tool set) | **~200–500 tokens resident per session** (the schema is always in the system prompt) | the agent must actively call a tool to poll |
+| skill + polling by convention | ~30 tokens (the skill description line; for Claude's plugin details the whole set measured about 86) | depends on the agent's discipline |
+| file mailbox + UserPromptSubmit hook (the claude-session-bus approach) | 0 | **delivered only on the next user prompt submission** (possibly hours) |
+| **agentbus: hook delivery at every boundary** | **0** (the hook exits empty-handed, the host injects nothing) | working: next tool call; idle: urgent / direct request via Stop wake |
 
-结论：**hook 是唯一"空闲零成本 + 近实时"的通道**。MCP 做 facade 可以，底座不行。
+Conclusion: **hooks are the only channel that is "zero cost when idle + near
+real-time"**. MCP works as a facade, but not as the base.
 
-具体每事件 token 预算（实测文本）：
+Specific per-event token budget (measured text):
 
-- join 名册注入：约 30 + 20/其他会话（一次性）；
-- 每条收到的消息：约 15 + 消息本体；
-- `announce` / `send`：各一次 Bash 调用（~25 out + ~15 in）；
-- 空闲且无消息：**0**（hook 打印空串，host 什么都不注入）；收到定向 request 或 urgent 时才花一次唤醒。
+- join roster injection: about 30 + 20 per other session (one-time);
+- each received message: about 15 + the message body;
+- `announce` / `send`: one Bash call each (~25 out + ~15 in);
+- idle with no messages: **0** (the hook prints an empty string, the host
+  injects nothing); only a direct request or an urgent message costs one wake.
 
-## 3. 架构
+## 3. Architecture
 
 ```
-┌─────────────┐  ┌─────────────┐  ┌─────────────┐   ┌──────────────┐
-│ claude code │  │    zcode    │  │  kimi/dsh   │   │ 人类 / 外部   │
-│  (session)  │  │  (session)  │  │ (no hooks)  │   │ 客户端        │
-│ hooks:      │  │ hooks:      │  │ skill / MCP │   │ HTTP / MCP   │
-│ SessionStart│  │ (同左,无End)│  │ 主动调用     │   │              │
-│ PostToolUse │  │             │  │             │   │              │
-│ Stop/User.. │  │             │  │             │   │              │
-└──────┬──────┘  └──────┬──────┘  └──────┬──────┘   └──────┬───────┘
-       │  agentbus hook  │  agentbus hook │ agentbus mcp    │ /api/*, /a2a/<name>
-       ▼                ▼                ▼                 ▼
-   unix socket (~/.agentbus/bus.sock, 0600) — JSON lines  ── loopback HTTP
-       ▲                ▲                ▲                 ▲
-       └────────────────┴────────────────┴─────────────────┘
-                      ┌───┴────┐
-                      │ agentbusd │  单进程 Go daemon
-                      │ 唯一命名   │  自动拉起(ssh-agent 式)
-                      │ 收件箱    │  state.json 原子持久化
-                      │ 存在感    │  PID/TTL 回收 + 名字墓碑
-                      │ 限速去重  │  看板 + A2A boundary（loopback）
-                      └─────────┘
+┌─────────────┐  ┌────────────────┐  ┌─────────────┐   ┌──────────────┐
+│ Claude Code │  │      ZCode     │  │ other CLIs  │   │ human /      │
+│  (session)  │  │   (session)    │  │ (no hooks)  │   │ external     │
+│ hooks:      │  │ hooks:         │  │ skill / MCP │   │ clients      │
+│ SessionStart│  │ (same, no End) │  │ agent calls │   │ HTTP / MCP   │
+│ PostToolUse │  │                │  │             │   │              │
+│ Stop/User.. │  │                │  │             │   │              │
+└──────┬──────┘  └───────┬────────┘  └──────┬──────┘   └──────┬───────┘
+       │ agentbus hook   │ agentbus hook    │ agentbus mcp    │ /api/*, /a2a/<name>
+       ▼                 ▼                  ▼                 ▼
+   unix socket (~/.agentbus/bus.sock, 0600) — JSON lines   ── loopback HTTP
+       ▲                 ▲                  ▲                 ▲
+       └─────────────────┴──────────────────┴─────────────────┘
+                     ┌───┴──────────┐
+                     │ agentbusd    │  single-process Go daemon
+                     │ unique names │  auto-spawned (ssh-agent style)
+                     │ inbox        │  atomic state.json persistence
+                     │ presence     │  PID/TTL reaping + name tombstones
+                     │ rate/dedup   │  dashboard + A2A boundary (loopback)
+                     └──────────────┘
 ```
 
-组件：
+Components:
 
-- **daemon**（`agentbus serve`，由任何一次使用自动拉起）：注册表 + 收件箱 + 全局消息环形日志；
-- **CLI**（同一二进制）：人/agent 手动命令（who/send/ask/notify/announce/inbox/log/doctor）；
-- **`agentbus hook`**：唯一 hook 入口。读 stdin 的 hook JSON（`hook_event_name`
-  / `session_id` / `cwd`），按事件输出 host 期望的严格 JSON，**空结果不输出**；
-- **`agentbus mcp`**：stdio MCP server，把 who/announce/send/ask/inbox 暴露成
-  工具，供没有 hook 但支持 MCP 的 harness 使用；
-- **web / A2A**（`internal/web`）：看板 + `/api/state`、`/api/send` +
-  `/a2a/<name>` 的 JSON-RPC 子集，只绑 loopback；
-- **skill**（`SKILL.md`）：教 agent 协作礼仪与命令，装到 `~/.agents/skills/`
-  （跨 agent 共享目录）及各 agent 自己的 skills 目录；
-- **plugin 包**（`integrations/*/plugin`）：把同一套 hooks + skill 打成一个
-  可安装单元（Claude Code 本地 marketplace / `--plugin-dir`，ZCode 插件管理）。
+- **daemon** (`agentbus serve`, auto-spawned by any use): registry + inboxes +
+  a global message ring log;
+- **CLI** (same binary): manual commands for humans and agents
+  (who/send/ask/notify/announce/inbox/log/doctor);
+- **`agentbus setup`**: detects installed harnesses and wires their hooks,
+  native plugin or skill in one idempotent pass (see [install.md](install.md));
+- **`agentbus hook`**: the single hook entry point. Reads the hook JSON on
+  stdin (`hook_event_name` / `session_id` / `cwd`), prints the strict JSON the
+  host expects for the event, **and prints nothing for an empty result**;
+- **`agentbus mcp`**: a stdio MCP server exposing who/announce/send/ask/inbox
+  as tools, for harnesses that have no hooks but support MCP;
+- **web / A2A** (`internal/web`): the dashboard + `/api/state`, `/api/send` +
+  the JSON-RPC subset at `/a2a/<name>`, bound to loopback only;
+- **skill** (`SKILL.md`): teaches agents collaboration etiquette and commands;
+  installed to `~/.agents/skills/` (a directory shared across agents) and to
+  each agent's own skills directory;
+- **plugin bundles** (`integrations/*/plugin`): package the same hooks + skill
+  into one installable unit (Claude Code local marketplace / `--plugin-dir`,
+  ZCode plugin management).
 
-## 4. 会话身份与生命周期
+## 4. Session identity and lifecycle
 
-**身份键（ID）**——稳定、无需协调：
+**Session key (ID)** — stable, no coordination required:
 
-1. `$AGENTBUS_SESSION_ID` / `$CLAUDE_SESSION_ID`（ZCode 在 hook 里注入后者）→ `sid:<uuid>`；
-2. hook stdin JSON 的 `session_id` → `sid:<uuid>`（Claude Code 路径）；
-3. 兜底：`/proc` 祖先链上第一个非 shell 且 cmdline 匹配已知 CLI 的进程 → `pid:<pid>:<starttime>`（kimi/dsh 等无 hook 系统时，同一 agent 进程内多次调用同键）。
+1. `$AGENTBUS_SESSION_ID` / `$CLAUDE_SESSION_ID` (ZCode injects the latter in
+   the hook) → `sid:<uuid>`;
+2. `session_id` in the hook stdin JSON → `sid:<uuid>` (the Claude Code path);
+3. fallback: the first process on the `/proc` ancestor chain that is not a
+   shell and whose cmdline matches a known CLI → `pid:<pid>:<starttime>` (for
+   hook-less systems such as Kimi/DSH, several calls within the same agent
+   process get the same key).
 
-**名字（Name）**——显示与寻址句柄：注册时 `--name`/`AGENTBUS_NAME` 或服务端
-自动生成（`swift-otter`，48×48 词表）。冲突自动改名 `bob-2`，并在注入文本里
-注明。名字规范化为 `[a-z0-9-]{1,32}`。
+**Name** — the display and addressing handle: set at registration by
+`--name`/`AGENTBUS_NAME`, or auto-generated by the server (`swift-otter`,
+48×48 word list). On a collision the name is automatically renamed `bob-2` and
+noted in the injected text. Names are normalized to `[a-z0-9-]{1,32}`.
 
-**liveness**：
+**liveness**:
 
-- 有 PID（Linux `/proc`，starttime 防复用）：进程活着就在，**空闲不误杀**——
-  这是 TTL 方案做不到的（agent 空闲时没有 hook 触发）；
-- 无 PID（非 Linux / 探测失败）：TTL 6 小时，任意 op 刷新；
-- 懒回收：每次 op + daemon 20s ticker 双保险；回收后名字进**墓碑** 1 小时，
-  防止"新会话立刻复用刚死会话的名字"造成误认。
+- with a PID (Linux `/proc`, starttime guards against reuse): present as long
+  as the process is alive, **idle sessions are not falsely reaped** — something
+  a TTL scheme cannot do (an idle agent triggers no hook);
+- without a PID (non-Linux / probe failed): TTL 6 hours, refreshed by any op;
+- lazy reaping: every op plus the daemon's 20s ticker, two safeguards; after
+  reaping the name goes into a **tombstone** for 1 hour, so that a new session
+  immediately reusing the name of a just-dead session cannot cause
+  misidentification.
 
-**退出**：Claude Code 的 `SessionEnd` hook 主动 `leave`；ZCode 无此事件，
-靠 PID 回收兜底（实测即时）。
+**Exit**: Claude Code's `SessionEnd` hook actively calls `leave`; ZCode has no
+such event and relies on PID reaping as the fallback (immediate in testing).
 
-## 5. 消息模型与投递梯子
+## 5. Message model and delivery ladder
 
-消息是 `{messageId, from, to, kind, body, ts, replyTo, recipients}`。字段名向 A2A
-的 message envelope 靠拢（`messageId` / `replyTo` / `kind`），HTTP 边界可无损映射；
-`recipients` 记录实际投递到的会话数（单点为 1，广播为 N），供看板区分广播/单点。
+A message is `{messageId, from, to, kind, body, ts, replyTo, recipients}`. Field
+names lean toward A2A's message envelope (`messageId` / `replyTo` / `kind`), so
+the HTTP boundary maps losslessly; `recipients` records how many sessions were
+actually delivered to (1 for direct, N for broadcast), letting the dashboard
+tell broadcast from direct.
 
-| kind | 语义 | 唤醒空闲会话 |
+| kind | Semantics | Wakes an idle session |
 |---|---|---|
-| `chat`（默认） | 普通对话 | 否 |
-| `request` | 期待答复；`agentbus ask` 自动发送 | **定向：是**；广播：否 |
-| `reply` | 对 request 的答复，`replyTo` 指向原消息 | 否 |
-| `notice` | 单向下行通知；`agentbus notify` | 否 |
-| `urgent` | 人类中断 / 紧急协作 | **是** |
+| `chat` (default) | ordinary conversation | no |
+| `request` | expects an answer; `agentbus ask` sends it automatically | **direct: yes**; broadcast: no |
+| `reply` | answer to a request; `replyTo` points at the original message | no |
+| `notice` | one-way notification; `agentbus notify` | no |
+| `urgent` | human interruption / urgent collaboration | **yes** |
 
-`ask` 的答复消费：daemon 的 `ask` op 发完 request 后在调用者收件箱里等"来自
-对端的第一条消息"并**取走**（`TakeFrom`），所以答复不会被后续 hook 再投一次；
-其它消息原样留在队列里，仍按梯子投递。
+`ask`'s reply consumption: after sending a request, the daemon's `ask` op waits
+in the caller's inbox for "the first message from the peer" and **takes it**
+(`TakeFrom`), so the reply is not delivered a second time by a later hook;
+other messages stay in the queue as they are and are still delivered by the
+ladder.
 
-**定向 request 唤醒**：一条 `to=<本会话>` 的 request 是明确向这个 peer 提问；
-发送方通常在自己的回合里等待，而目标可能已经停在 prompt 上。旧的 urgent-only
-梯子会让目标一直等到用户下次输入，`ask` 只能超时。因此 Stop hook 的唤醒条件扩展为 urgent +
-定向 request，并在注入文本里给出每个 sender 的 `agentbus reply --to …` 命令（标注
-"pre-authorized"）。广播 request 仍不唤醒：一条广播叫醒所有空闲会话既贵又容易形成
-request 风暴；它按自然边界送达，收到者按相关性决定是否回复。
+**Direct request wake**: a request with `to=<this session>` explicitly asks
+this peer a question; the sender usually waits inside its own turn, while the
+target may already be sitting at the prompt. Under the old urgent-only ladder
+the target waits until the user's next input, and `ask` can only time out. So
+the Stop hook's wake condition was extended to urgent + direct request, and the
+injected text gives the `agentbus reply --to …` command for each sender (marked
+"pre-authorized"). Broadcast requests still do not wake: one broadcast waking
+every idle session is both expensive and apt to become a request storm; it is
+delivered at natural boundaries, and each recipient decides by relevance
+whether to reply.
 
-还有一个 Stop 无法覆盖的窗口：会话已经停在 prompt 之后才到达的 request——此时宿主
-不会再触发 Stop。DSH 原生插件在 agent `idle` 时每 5s 用同一套 Stop 策略 peek 一次
-（`AGENTBUS_DSH_POLL_MS`，默认 5000，0 关闭），命中 urgent/定向 request 就
-`agent.steer()`；DSH 文档明确 idle 的 steer 会开一个新回合，消息在 steer 前已 ack，
-不会重复投递。纯 hook 的 ZCode / Claude Code 没有这个宿主 API，仍受"只能在下一次
-自然边界看到消息"的限制。
+There is one more window Stop cannot cover: a request that arrives after the
+session has already stopped at the prompt — the host will not fire Stop again.
+The DSH native plugin, while the agent is `idle`, peeks once every 5s using the
+same Stop policy (`AGENTBUS_DSH_POLL_MS`, default 5000, 0 disables); if it
+hits urgent or a direct request, it calls `agent.steer()`. The DSH documentation
+states explicitly that steering an idle agent opens a new turn, and the message
+is acked before the steer, so it is not delivered twice. Pure-hook ZCode /
+Claude Code have no such host API and are still limited to "seeing messages
+only at the next natural boundary".
 
-`reply` 的答复对象：daemon 从已投递缓存、未 ack 的收件箱（`inbox --peek`）和
-持久化历史中选最新的一条可寻址消息（在线对端，或人类 `user`/`user-web`；跳过
-已离开的会话），以 kind=reply + replyTo 发出。人类身份是虚拟收件人：消息只进
-全局日志/看板，没有进程收件箱——这让人工中断/看板消息也能被定向确认，不必广播。这样注入文本不必携带长 messageId，agent
-也不会因为记错 id 而回复失败；需要精确对应时仍可用
-`send --kind reply --reply-to <id>`。
+`reply`'s target: the daemon picks the newest addressable message from the
+delivered cache, the unacked inbox (`inbox --peek`) and persisted history (an
+online peer, or the human `user`/`user-web`; sessions that have left are
+skipped), and sends it with kind=reply + replyTo. The human identity is a
+virtual recipient: messages only go into the global log/dashboard, with no
+process inbox — that lets human interruptions and dashboard messages get a
+direct reply without broadcasting. This way the injected text does not need to
+carry a long messageId, and an agent cannot fail to reply because it
+misremembered the id; when an exact match is needed,
+`send --kind reply --reply-to <id>` is still available.
 
-投递梯子（越往下越"越界"）：
+Delivery ladder (the lower the row, the further it intrudes into the session):
 
-| host 事件 | agent 状态 | agentbus 行为 |
+| Host event | Agent state | agentbus behaviour |
 |---|---|---|
-| `SessionStart` | 刚启动 | 注册 + 注入**会话契约（primer）+ 名册**——既告诉它"谁在做 XXX"，也告诉它"这些消息是什么、该怎么回应" |
-| `PostToolUse`（任意工具） | 工作中 | poll：有信则 `additionalContext` 注入，无信静默 |
-| `UserPromptSubmit` | 回合开始 | 同上（补齐用户不在时错过的） |
-| `Stop` | 即将空闲 | **先 peek**：队列含 urgent 或**定向 request** 才 `{"decision":"block","reason":…}` 唤醒并 flush 队列；否则保持静默，消息留到下一个自然边界 |
-| `SessionEnd` | 退出 | `leave`（ZCode 无此事件，靠 PID 回收） |
+| `SessionStart` | just started | register + inject the **session contract + roster** — telling it both "who is doing XXX" and "what these messages are and how to respond" |
+| `PostToolUse` (any tool) | working | poll: if there is mail, inject it as `additionalContext`; if not, stay silent |
+| `UserPromptSubmit` | turn start | same as above (catches up on what was missed while the user was away) |
+| `Stop` | about to go idle | **peek first**: only when the queue holds urgent or a **direct request** does `{"decision":"block","reason":…}` wake it and flush the queue; otherwise stay silent and leave the messages for the next natural boundary |
+| `SessionEnd` | exiting | `leave` (ZCode has no such event; PID reaping covers it) |
 
-工作区发现：SessionStart 名册不是一股脑的全局列表，而是按**同一 worktree**
-（相同目录或同一 git worktree 内的子目录）、**同一 repo 的其他 worktree**
-（`git rev-parse --git-common-dir` 相同）、**其他**三组呈现；`agentbus peers`
-可以随时查询这三组。这样新会话开局就能看到"谁和我改了同一批文件"，而不是从
-一堆无关会话里猜。Kimi 的 SessionStart stdout 不会被注入，因此它的首个
-UserPromptSubmit 会补一次同样的 workspace 名册（每会话只注入一次）。
+Workspace discovery: the SessionStart roster is not one big global list but is
+presented in three groups — **the same worktree** (the same directory or a
+subdirectory of the same git worktree), **other worktrees of the same repo**
+(identical `git rev-parse --git-common-dir`), and **others**; `agentbus peers`
+can query these three groups at any time. This way a new session sees from the
+start "who is changing the same files as I am", instead of guessing from a pile
+of unrelated sessions. Kimi's SessionStart stdout is not injected, so its first
+UserPromptSubmit injects the same workspace roster once (injected only once per
+session).
 
-`AGENTBUS_WAKE=urgent` 退回仅 urgent 的旧行为，`AGENTBUS_WAKE=all` 让任意消息
-都可唤醒。poll 即 ack（消息只投一次），ack 后保留最近 5 条供 `inbox --peek` 复读。
-注入文本保持紧凑（见 render.go），并显式标注来源与可回复动作；定向 request 在
-header 与 footer 都强调要回一句：
+`AGENTBUS_WAKE=urgent` falls back to the old urgent-only behaviour;
+`AGENTBUS_WAKE=all` lets any message wake. A poll is an ack (a message is
+delivered once); after the ack the last 5 messages are kept for `inbox --peek`
+to reread. The injected text stays compact (see render.go) and explicitly marks
+the source and the available reply action; a direct request stresses in both
+header and footer that a reply is expected:
 
 ```
 [agentbus] 1 peer message (from other agent sessions, not the user) — 1 direct request needs a reply:
@@ -165,111 +209,142 @@ header 与 footer 都强调要回一句：
 [agentbus]   agentbus reply --to yarrow-yak "..."
 ```
 
-为什么必须做这层 framing、未铺垫的会话会怎么处理注入文本、以及"愿不愿意用"
-的实测记录，见 [adoption.md](adoption.md)。
+For why this framing layer is necessary, how an unprimed session handles
+injected text, and the measured record of whether agents are willing to use it,
+see [adoption.md](adoption.md).
 
-## 6. Web 看板与 A2A boundary
+## 6. Web dashboard and A2A boundary
 
-`internal/web` 在 daemon 启动时监听 `127.0.0.1:8787`（`AGENTBUS_WEB_PORT`
-可改），与 unix socket 共用同一个 `*bus.Bus`，没有第二份状态：
+When the daemon starts, `internal/web` listens on `127.0.0.1:8787`
+(`AGENTBUS_WEB_PORT` changes it), shares the same `*bus.Bus` as the unix
+socket, and keeps no second copy of state:
 
-- `GET /`：内嵌 HTML 看板。会话按 **repo → worktree** 分组；每条消息带
-  📢 广播 / 🎯 单点 标签、广播实际收件人数和工作区标签；request 显示
-  「待回复 / 已回复」，待回复的定向 request 在 header 计数并在会话行挂 ⏳；
-  未读的 pending request 带「未读 N」和删除按钮；顶部可筛选 全部 / 广播 /
-  单点 / 待回复，单点 reply 会自动带 replyTo。底部是独立的「收发日志」面板，
-  有自己的滚动区，不随上方阅读面板的筛选变化。
-  页面内所有请求用相对路径 `./api/…`，因此放在 code-server 的
-  `/proxy/8787/` 下无需改写；
-- `GET /api/state`、`POST /api/send`、`POST /api/delete`：看板的后端，也是
-  脚本化入口；`/api/send` 接受 `replyTo`，供看板的「回复」按钮使用；
-  `/api/delete` 只删除仍有未读副本的消息（从未读收件箱、mine 缓存和全局
-  日志中移除），已读历史不可改写；`/api/state` 额外返回
-  `unread: {messageId: [未读会话名]}`，供界面区分「未读 / 已读未回」；
-- A2A 子集：根 Agent Card、`/a2a/<name>/.well-known/agent-card.json`、
-  `POST /a2a/<name>` 的 JSON-RPC 2.0 `message/send`（只支持 text parts，
-  `metadata.agentbus.kind` 映射消息类型；未知方法返回 `-32601`）。
+- `GET /`: the embedded HTML dashboard, now a two-pane chat UI. Sessions are
+  grouped by **repo → worktree** in the roster; each session gets a stable
+  avatar (agent-family hue plus name-derived offset and initials), and clicking
+  a member opens a conversation filtered to that member. The feed is
+  chronological (oldest → newest, latest at the bottom) and auto-scrolls only
+  when the reader is already near the bottom; consecutive messages collapse,
+  broadcasts carry a "broadcast" tag, and a request shows "pending reply /
+  replied" inline. Unread pending requests carry "unread N" plus a delete
+  action; the global view filters all / broadcast / direct / pending, and a
+  direct reply automatically carries replyTo. There is deliberately **no**
+  separate traffic log: it duplicated the same messages with a second scroll
+  area. All requests in the page use the relative path `./api/…`, so it needs
+  no rewriting when placed under code-server's `/proxy/8787/`;
+- `GET /api/state`, `POST /api/send`, `POST /api/delete`: the dashboard's
+  backend and a scripting entry point; `/api/send` accepts `replyTo` for the
+  dashboard's "reply" button; `/api/delete` only deletes messages that still
+  have unread copies (removing them from the unread inbox, the `mine` cache
+  and the global log) — read history cannot be rewritten; `/api/state` also
+  returns `unread: {messageId: [unread session names]}`, so the UI can tell
+  "unread / read but unanswered";
+- A2A subset: the root Agent Card,
+  `/a2a/<name>/.well-known/agent-card.json`, and JSON-RPC 2.0 `message/send` at
+  `POST /a2a/<name>` (text parts only; `metadata.agentbus.kind` maps the message
+  kind; unknown methods return `-32601`).
 
-端口占用、监听失败都只记日志，**不影响总线**（daemon 照常服务 unix socket）。
-`AGENTBUS_WEB=0` 关闭；`AGENTBUS_WEB_TOKEN` 非空时三个入口统一要求 bearer
-token（`Authorization` / `X-Agentbus-Token` / `?token=`）。绑定失败时
-`status`/`doctor` 里看不到 web 地址。
+A busy port or a listen failure is only logged and **does not affect the bus**
+(the daemon keeps serving the unix socket). `AGENTBUS_WEB=0` disables it; when
+`AGENTBUS_WEB_TOKEN` is non-empty, all three entry points require a bearer token
+uniformly (`Authorization` / `X-Agentbus-Token` / `?token=`). When binding
+fails, `status`/`doctor` show no web address.
 
 ## 7. MCP facade
 
-`agentbus mcp` 是一个 stdio JSON-RPC server（协议版本 `2025-06-18`），工具：
+`agentbus mcp` is a stdio JSON-RPC server (protocol version `2025-06-18`) with
+these tools:
 
-| 工具 | 对应 CLI |
+| Tool | CLI equivalent |
 |---|---|
 | `agentbus_who` | `who` |
 | `agentbus_announce` | `announce` |
-| `agentbus_send` | `send`（含 kind） |
-| `agentbus_ask` | `ask`（等待答复） |
-| `agentbus_inbox` | `inbox`（可长轮询） |
+| `agentbus_send` | `send` (including kind) |
+| `agentbus_ask` | `ask` (waits for the answer) |
+| `agentbus_inbox` | `inbox` (long-poll supported) |
 
-它只是同一个 daemon 的另一个客户端：身份仍走 `/proc` 祖先进程，因此同一
-agent 进程里的工具调用共享一个信箱。选择它的前提是 harness 没有 hook；否则
-hook 的"空闲零成本"严格更优（MCP schema 常驻上下文）。
+It is just another client of the same daemon: identity still comes from
+`/proc` ancestry, so tool calls within one agent process share one mailbox.
+Choose it only when the harness has no hooks; otherwise the hook's "zero cost
+when idle" is strictly better (the MCP schema is permanently resident in
+context).
 
+## 8. Anti-storm (agents chatting each other into a loop)
 
-## 8. 防风暴（agent 互聊死循环）
+The real risk: A wakes up to reply to B, B wakes up to reply to A… Three gates:
 
-真实风险：A 醒来回复 B，B 醒来回复 A……三道闸：
+1. **Rate limiting**: 20 msg/min per session; going over the limit returns an
+   error (the error text suggests "pause and summarize");
+2. **Deduplication**: an identical from/to/body sent again within 60s is
+   dropped outright (also guards against the Bash tool retrying a double send);
+3. **Host limits**: ZCode's Stop continuation is capped at 3; the skill states
+   in plain text "at most ~3 round trips per topic";
+4. **Message tiers**: only urgent and a **direct request** can trigger a Stop
+   wake; chat, notice, reply and broadcast request all wait for natural
+   boundaries. Replies do not wake, so "request → reply" cannot form an
+   automatic back-and-forth; a direct request wakes only one peer, and is
+   constrained by the subsequent no-wake-on-reply rule and the ~3-turn limit.
 
-1. **限速**：每会话 20 msg/min，超限报错（错误文本提示"暂停并总结"）；
-2. **去重**：60s 内相同 from/to/body 的重复发送直接吞掉（也防 Bash 工具重试双发）；
-3. **宿主限制**：ZCode 的 Stop 延续最多 3 次；skill 明文"每主题最多 ~3 个来回"；
-4. **消息分级**：只有 urgent 与**定向 request** 能触发 Stop 唤醒；chat、notice、
-   reply、广播 request 都留在自然边界。reply 不唤醒，所以"请求→答复"不会形成
-   自动往复；定向 request 只叫醒一个 peer，且受后续 reply 不唤醒与 ~3 回合限制约束。
+## 9. Reliability
 
-## 9. 可靠性
+- daemon not running? any command auto-spawns it (flock prevents concurrent
+  spawns; waits up to 4s for the socket);
+- daemon crashed? `state.json` is written atomically (tmp+rename, 300ms
+  debounce), losing at most the last 300ms; session state is rebuilt
+  automatically by the next hook (a poll that receives an unknown session
+  silently re-registers);
+- any hook exception exits 0 silently (writing `$AGENTBUS_HOME/hook.log`), and
+  **never interrupts the host session**;
+- message limit 8KB, inbox 200 messages, global log 300 messages, to prevent
+  unbounded growth;
+- a Web/A2A listen failure (port in use) only writes a log and does not affect
+  the bus; a request without the token is rejected rather than silently
+  allowed.
 
-- daemon 不在？任何命令自动拉起（flock 防并发 spawn，等 socket 最多 4s）；
-- daemon 崩溃？`state.json` 原子写（tmp+rename，防抖 300ms），最多丢最后 300ms；
-  会话状态由下一次 hook 自动重建（poll 收到 unknown session → 静默重注册）；
-- hook 一切异常静默退出 0（写 `$AGENTBUS_HOME/hook.log`），**绝不打断宿主会话**；
-- 消息上限 8KB、收件箱 200 条、全局日志 300 条，防膨胀；
-- Web/A2A 监听失败（端口占用）只写日志，不影响总线；token 缺失时拒绝而不是
-  静默放行。
+## 10. Security model
 
-## 10. 安全模型
+A single-user trusted bus: unix socket 0600, no authentication (any process with
+the same uid can read and write; trust at the same level as ssh-agent). The HTTP
+surface binds only to `127.0.0.1` by default and is not exposed to the outside
+network; when needed, add a bearer token with `AGENTBUS_WEB_TOKEN` (validated
+uniformly by the dashboard, API and A2A). Sender names are not strongly
+authenticated — a name is a collaboration handle, not a security boundary; the
+documentation says so explicitly. Cross-machine and multi-user are v2 topics
+(TCP + token auth).
 
-单用户可信总线：unix socket 0600，无鉴权（同 uid 进程均可读写，与 ssh-agent
-同级信任）。HTTP 面默认只绑 `127.0.0.1`，不对外网暴露；需要时用
-`AGENTBUS_WEB_TOKEN` 加 bearer token（看板、API、A2A 统一校验）。
-发件人名字不做强认证——名字是协作句柄不是安全边界，文档明示。跨机器/多用户
-是 v2 话题（TCP + token auth）。
+## 11. Integration matrix
 
-## 11. 集成矩阵
-
-| agent | 接入方式 | 投递时机 |
+| Agent | Integration | Delivery timing |
 |---|---|---|
-| claude code | hooks + skill，或 plugin 包 | 名册 / 工作中 / 回合开始 / 空闲唤醒 / 退出清理 |
-| zcode | hooks + skill（配置需 `hooks.enabled:true`；plugin 自带无需开关），或 plugin 包 | 同上 minus 退出（PID 回收） |
-| dsh | 原生 Cordis 插件（`integrations/dsh/plugin`） | 名册/契约、回合边界、工具调用后；urgent / 定向 request 经 `agent.turn-stopping` steer 唤醒，idle agent 由 5s 轮询 steer 唤醒 |
-| kimi / 其他 | skill only，或 `agentbus mcp`（身份走 /proc 祖先） | 主动：who/announce/inbox（`--wait` 长轮询） |
-| 人类 / 外部系统 | Web 看板、`/api/send`、A2A `message/send` | 看板实时；A2A 同步返回 |
+| Claude Code | hooks + skill, or the plugin bundle | roster / while working / turn start / idle wake / exit cleanup |
+| ZCode | hooks + skill (the config needs `hooks.enabled:true`; the plugin bundle includes it and needs no switch), or the plugin bundle | same as above except exit (PID reaping) |
+| DSH | native Cordis plugin (`integrations/dsh/plugin`) | roster/contract, turn boundaries, after tool calls; urgent / direct request wake via an `agent.turn-stopping` steer; an idle agent is woken by a 5s poll steer |
+| Kimi / others | skill only, or `agentbus mcp` (identity via `/proc` ancestry) | pull: who/announce/inbox (`--wait` long-poll) |
+| Human / external systems | Web dashboard, `/api/send`, A2A `message/send` | dashboard real time; A2A returns synchronously |
 
-## 12. 失败模式与行为
+## 12. Failure modes and behaviour
 
-| 场景 | 行为 |
+| Scenario | Behaviour |
 |---|---|
-| daemon 被杀 | 下一次任意命令/hook 自动拉起，state.json 恢复 |
-| agent 终端被关（SIGKILL） | PID 回收，名字 1h 墓碑，未读消息随收件箱过期 |
-| 两个会话同名 | 后者自动 `-2` 后缀并被告知 |
-| 对端不存在 | 错误 + did-you-mean 建议 |
-| hook 输出非法 JSON | 不会发生：固定模板，空结果零输出 |
-| 看板端口被占 | 只记日志，总线与 hook 照常；`status` 不显示 web 地址 |
-| A2A 未知方法 | JSON-RPC `-32601`，连接不断 |
-| `ask` 等不到答复 | 退出码 1 + 提示对端可能忙/未装 hook，`inbox --peek` 稍后取，不阻塞会话 |
-| `reply` 没有可回复的对端 | 明确报错并提示改用 `send <name>`；不会误发给人类或已离开的会话 |
-| MCP 客户端发 notification | 无 id 直接忽略（JSON-RPC 语义） |
+| daemon killed | the next command or hook auto-spawns it; state.json recovers |
+| agent terminal closed (SIGKILL) | PID reaping; the name is tombstoned for 1h; unread messages expire with the inbox |
+| two sessions with the same name | the later one automatically gets a `-2` suffix and is told |
+| peer does not exist | error + did-you-mean suggestion |
+| hook outputs invalid JSON | cannot happen: fixed template, zero output for an empty result |
+| dashboard port in use | logged only; the bus and hooks run as usual; `status` shows no web address |
+| A2A unknown method | JSON-RPC `-32601`, connection stays open |
+| `ask` gets no answer | exit code 1 + hint that the peer may be busy or have no hooks installed; the answer can be fetched later with `inbox --peek`; the session is not blocked |
+| `reply` has no peer to reply to | explicit error suggesting `send <name>` instead; it will not misdeliver to the human or to a session that has left |
+| MCP client sends a notification | no id → ignored (JSON-RPC semantics) |
 
-## 13. 未来方向
+## 13. Future directions
 
-- 把"会话采纳率"做成可观测量（announce 覆盖率、request 回复率、urgent 误用率），
-  用来调 primer 与 skill 的措辞；
-- channels/topics（`#frontend`）与 worktree 感知的冲突提示（同 repo 不同 branch 自动提醒）；
-- TCP + token auth 跨机器（复用 `AGENTBUS_WEB_TOKEN` 的校验思路）；
-- 看板上的消息搜索与历史回放（当前只有环形日志的最近 300 条）。
+- make "session adoption rate" an observable metric (announce coverage, request
+  reply rate, urgent misuse rate), and use it to tune the wording of the
+  session contract and the skill;
+- channels/topics (`#frontend`) and worktree-aware conflict hints (automatic
+  reminders for different branches of the same repo);
+- cross-machine TCP + token auth (reusing the validation approach of
+  `AGENTBUS_WEB_TOKEN`);
+- message search and history replay in the dashboard (currently only the latest
+  300 entries of the ring log).

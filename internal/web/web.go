@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"agentbus/internal/bus"
+	"github.com/windviki/agentbus/internal/bus"
 )
 
 //go:embed index.html

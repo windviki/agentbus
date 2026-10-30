@@ -17,13 +17,13 @@ import (
 	"strings"
 	"time"
 
-	"agentbus/internal/bus"
-	"agentbus/internal/client"
-	"agentbus/internal/mcp"
-	"agentbus/internal/procinfo"
-	"agentbus/internal/proto"
-	"agentbus/internal/server"
-	"agentbus/internal/web"
+	"github.com/windviki/agentbus/internal/bus"
+	"github.com/windviki/agentbus/internal/client"
+	"github.com/windviki/agentbus/internal/mcp"
+	"github.com/windviki/agentbus/internal/procinfo"
+	"github.com/windviki/agentbus/internal/proto"
+	"github.com/windviki/agentbus/internal/server"
+	"github.com/windviki/agentbus/internal/web"
 )
 
 func main() { os.Exit(run(os.Args[1:])) }
@@ -71,6 +71,8 @@ func run(args []string) int {
 		return cmdLog(rest)
 	case "doctor":
 		return cmdDoctor(rest)
+	case "setup":
+		return cmdSetup(rest)
 	case "version", "--version", "-v":
 		fmt.Println(server.Version)
 		return 0
@@ -107,6 +109,10 @@ Usage:
   agentbus log [-n 20]                       # recent bus traffic (all sessions)
   agentbus mcp                               # run as a stdio MCP server (tools for
                                              # harnesses without hooks: kimi/dsh/...)
+  agentbus setup [--yes] [--dry-run]          # detect installed agents, then wire the
+                                             # ones you pick (hooks/plugin/skill).
+                                             # --agents claude,zcode,kimi,dsh
+                                             # --uninstall removes agentbus wiring
   agentbus status | doctor                   # daemon state / installation checks
   agentbus serve [--detach] | stop           # daemon lifecycle (auto-spawns anyway)
 
@@ -121,7 +127,7 @@ to override; humans without a session send as "user".
 Env: AGENTBUS_HOME (default ~/.agentbus), AGENTBUS_AGENT (force agent label),
      AGENTBUS_NAME (preferred name for hook registration),
      AGENTBUS_PRIMER=0 (omit the session contract from the join summary),
-     AGENTBUS_WAKE (all = wake idle sessions on any message; default: urgent only),
+     AGENTBUS_WAKE (default request = urgent + direct request; urgent; all),
      AGENTBUS_WEB_PORT (dashboard port, default 8787), AGENTBUS_WEB=0 (disable),
      AGENTBUS_WEB_TOKEN (require bearer token on the dashboard/A2A HTTP API).
 
@@ -1063,10 +1069,26 @@ func cmdDoctor(args []string) int {
 	}
 
 	userHome, _ := os.UserHomeDir()
+	specs := discoverAgents(userHome)
+	wired := 0
+	for _, s := range specs {
+		switch {
+		case s.Configured:
+			wired++
+			fmt.Printf("[ok] integration: %-12s wired (%s)\n", s.Name, s.Method)
+		case s.Detected:
+			fmt.Printf("[--] integration: %-12s detected but not wired — `agentbus setup`\n", s.Name)
+		}
+	}
+	if wired == 0 {
+		fmt.Println("[--] integrations: none wired — run `agentbus setup` (or `agentbus setup --yes`)")
+	}
+
 	skillPaths := []string{
 		filepath.Join(userHome, ".agents", "skills", "agentbus", "SKILL.md"),
 		filepath.Join(userHome, ".claude", "skills", "agentbus", "SKILL.md"),
-		filepath.Join(userHome, ".zcode", "skills", "agentbus", "SKILL.md"),
+		filepath.Join(userHome, ".kimi-code", "skills", "agentbus", "SKILL.md"),
+		filepath.Join(userHome, ".kimi", "skills", "agentbus", "SKILL.md"),
 	}
 	found := false
 	for _, p := range skillPaths {
@@ -1074,27 +1096,14 @@ func cmdDoctor(args []string) int {
 			found = true
 		}
 	}
-	note(found, "skill: %s (install: scripts/install.sh)", map[bool]string{true: "installed", false: "not installed"}[found])
-
-	hookCfgs := []string{
-		filepath.Join(userHome, ".claude", "settings.json"),
-		filepath.Join(userHome, ".zcode", "cli", "config.json"),
-	}
-	hooked := false
-	for _, p := range hookCfgs {
-		if data, err := os.ReadFile(p); err == nil && strings.Contains(string(data), "agentbus hook") {
-			hooked = true
-		}
-	}
-	if !hooked {
-		fmt.Println("[--] hooks: no agentbus hooks configured — messages arrive only when the agent polls (see integrations/)")
+	if !found {
+		fmt.Println("[--] skill: not installed — `agentbus setup` installs it")
 	}
 
-	pathEnv := os.Getenv("PATH")
-	if strings.Contains(pathEnv+":"+string(filepath.ListSeparator), filepath.Dir(self)+string(filepath.ListSeparator)) || strings.Contains(pathEnv, filepath.Dir(self)) {
-		fmt.Println("[--] PATH: binary directory is on PATH")
+	if p, err := exec.LookPath("agentbus"); err == nil {
+		fmt.Printf("[ok] PATH: agentbus resolves to %s\n", p)
 	} else {
-		fmt.Printf("[--] PATH: %s not on PATH — hooks must be able to run `agentbus`\n", filepath.Dir(self))
+		fmt.Printf("[!!] PATH: agentbus not found — hooks must be able to run `agentbus`; add %s to PATH\n", filepath.Dir(self))
 	}
 
 	if ok {

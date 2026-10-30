@@ -3,345 +3,437 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0f14'/%3E%3Cpath d='M8 11h16M8 16h10M8 21h13' stroke='%234da3ff' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0f14'/%3E%3Cpath d='M8 11h16M8 16h10M8 21h13' stroke='%235aa2ff' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 <title>agentbus</title>
 <style>
   :root {
-    --bg: #0b0f14; --bg2: #0e141b; --panel: #141b24; --panel2: #19222d;
-    --panel3: #1f2a37; --line: #27323f; --line2: #32404f;
-    --fg: #dce6f2; --dim: #8998aa; --dim2: #64738a;
-    --acc: #4da3ff; --bc: #b18cff; --dm: #4da3ff; --ok: #7fd18a;
-    --req: #ffb454; --urgent: #ff6b6b; --reply: #b18cff; --notice: #7fd18a;
-    --chat: #76859a; --human: #7fd18a;
-    --shadow: 0 8px 28px rgba(0,0,0,.28);
+    --bg: #0b1016; --bg2: #0e151d; --panel: #121a23; --panel2: #17212c;
+    --panel3: #1d2936; --line: #24313e; --line2: #304152;
+    --fg: #e3ecf5; --dim: #93a4b8; --dim2: #68788d;
+    --acc: #5aa2ff; --bc: #b18cff; --dm: #5aa2ff; --ok: #61d59b;
+    --req: #ffb454; --urgent: #ff7272; --reply: #b18cff; --notice: #61d59b;
+    --chat: #8b9bb0; --human: #61d59b;
+    --shadow: 0 12px 36px rgba(0,0,0,.26);
+    --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+            "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei",
+            sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+            "Liberation Mono", monospace;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
-    margin: 0; background:
-      radial-gradient(1100px 500px at 85% -10%, rgba(77,163,255,.08), transparent 60%),
-      radial-gradient(900px 500px at 0% 0%, rgba(177,140,255,.06), transparent 55%),
+    margin: 0; color: var(--fg); font: 14px/1.6 var(--sans);
+    background:
+      radial-gradient(1000px 460px at 88% -12%, rgba(90,162,255,.09), transparent 62%),
+      radial-gradient(800px 420px at 0% -8%, rgba(177,140,255,.06), transparent 58%),
       var(--bg);
-    color: var(--fg); font: 13.5px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
-  button { font: inherit; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
-  ::-webkit-scrollbar-thumb { background: #2a3544; border-radius: 8px; border: 2px solid var(--bg); }
+  ::-webkit-scrollbar-thumb { background: #2b3948; border-radius: 8px; border: 2px solid var(--bg); }
   ::-webkit-scrollbar-track { background: transparent; }
+  .mono { font-family: var(--mono); }
 
+  /* ---- top bar ---------------------------------------------------------- */
   header {
     display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-    padding: 11px 20px; border-bottom: 1px solid var(--line);
-    background: rgba(14,20,27,.92); backdrop-filter: blur(8px);
+    min-height: 60px; padding: 9px 22px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(14,21,29,.9); backdrop-filter: blur(10px);
     position: sticky; top: 0; z-index: 20;
   }
-  header h1 { font-size: 16px; margin: 0; letter-spacing: .6px; white-space: nowrap; }
-  header h1 .bus { color: var(--acc); }
-  header h1 .tag { color: var(--dim2); font-size: 10px; letter-spacing: 1.5px; margin-left: 6px; }
-  .meta { color: var(--dim); font-size: 11.5px; white-space: nowrap; }
-  .meta b { color: var(--fg); font-weight: 600; }
-  .pill {
-    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
-    background: rgba(255,180,84,.10); color: var(--req);
-    border: 1px solid rgba(255,180,84,.35); border-radius: 999px;
-    padding: 3px 11px; font-size: 11.5px;
+  .brand { display: flex; align-items: center; gap: 9px; }
+  .brand .logo {
+    width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center;
+    background: linear-gradient(145deg, rgba(90,162,255,.24), rgba(177,140,255,.18));
+    border: 1px solid rgba(90,162,255,.35); color: var(--acc); font-size: 15px;
   }
-  .pill:hover { background: rgba(255,180,84,.18); }
+  .brand h1 { font-size: 15.5px; margin: 0; letter-spacing: .2px; font-weight: 700; }
+  .brand .tag {
+    color: var(--dim2); font-size: 9.5px; letter-spacing: 1.6px; font-weight: 600;
+    margin-left: 8px; vertical-align: 1px;
+  }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(255,180,84,.1); color: var(--req);
+    border: 1px solid rgba(255,180,84,.32); border-radius: 999px;
+    padding: 3px 12px; font-size: 12px; margin-left: 2px;
+  }
+  .pill:hover { background: rgba(255,180,84,.17); }
   .pill.hidden { display: none; }
-  .conn { margin-left: auto; color: var(--ok); font-size: 11px; white-space: nowrap; }
+  .right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+  .conn { color: var(--ok); font-size: 11.5px; white-space: nowrap; }
   .conn.off { color: var(--urgent); }
-  #identity { display: flex; gap: 6px; align-items: center; color: var(--dim); font-size: 11.5px; }
+  #identity { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 11.5px; }
   #identity input {
-    width: 108px; background: var(--bg2); color: var(--fg);
-    border: 1px solid var(--line); border-radius: 7px; padding: 4px 8px;
+    width: 104px; background: var(--bg2); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 4px 9px; font-size: 12px;
   }
   #identity input:focus { outline: none; border-color: var(--acc); }
 
+  /* ---- shell ------------------------------------------------------------ */
   main {
-    display: grid; grid-template-columns: 388px minmax(0, 1fr);
-    gap: 16px; padding: 16px 20px; max-width: 1500px; margin: 0 auto;
+    display: grid; grid-template-columns: 348px minmax(0, 1fr);
+    gap: 16px; padding: 16px 22px; max-width: 1560px; margin: 0 auto;
+    height: calc(100vh - 60px);
   }
   .panel {
     background: var(--panel); border: 1px solid var(--line);
-    border-radius: 12px; overflow: hidden; box-shadow: var(--shadow);
+    border-radius: 16px; overflow: hidden; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; min-height: 0;
   }
-  .panel-head {
-    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    padding: 10px 14px; border-bottom: 1px solid var(--line);
-    background: linear-gradient(180deg, rgba(255,255,255,.03), transparent);
-  }
-  .panel-head h2 {
-    font-size: 11px; text-transform: uppercase; letter-spacing: 1.4px;
-    color: var(--dim); margin: 0; font-weight: 600;
-  }
-  .panel-head h2 .hint { text-transform: none; letter-spacing: 0; color: var(--dim2); font-weight: 400; margin-left: 7px; }
-  .roster-panel { display: flex; flex-direction: column; max-height: calc(100vh - 88px); }
-  #roster { overflow-y: auto; padding: 8px; }
-  .chat-panel { display: flex; flex-direction: column; height: calc(100vh - 88px); min-height: 560px; }
-  #feed { flex: 1; overflow-y: auto; }
 
-  /* ---- roster: workspace groups ---- */
-  .ws-group { margin-bottom: 8px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg2); }
-  .ws-group:last-child { margin-bottom: 0; }
-  .ws-head { padding: 8px 10px; background: var(--panel2); border-bottom: 1px solid var(--line); }
-  .ws-line1 { display: flex; align-items: baseline; gap: 7px; }
-  .ws-name { font-weight: 700; color: var(--fg); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ws-kind { font-size: 9.5px; color: var(--dim2); border: 1px solid var(--line2); border-radius: 999px; padding: 0 5px; letter-spacing: .5px; }
-  .ws-count { margin-left: auto; color: var(--dim); font-size: 10.5px; white-space: nowrap; }
-  .ws-path { color: var(--dim2); font-size: 10.5px; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ws-pending { color: var(--req); font-size: 10.5px; margin-left: 6px; }
-  .wt-head {
-    display: flex; align-items: baseline; gap: 7px; padding: 5px 10px 4px;
-    background: rgba(255,255,255,.018); border-bottom: 1px solid var(--line);
-    color: var(--dim); font-size: 10.5px;
+  /* ---- sidebar ---------------------------------------------------------- */
+  .sidebar-head {
+    display: flex; align-items: center; gap: 9px;
+    padding: 13px 15px 10px; border-bottom: 1px solid var(--line);
   }
-  .wt-branch { color: var(--acc); }
-  .wt-path { color: var(--dim2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .agent { padding: 9px 10px 9px 12px; border-bottom: 1px solid var(--line); position: relative; }
-  .agent:last-child { border-bottom: none; }
-  .agent:hover { background: rgba(77,163,255,.045); }
-  .agent.has-pending { background: rgba(255,180,84,.06); }
-  .agent.has-pending:hover { background: rgba(255,180,84,.10); }
-  .agent-top { display: flex; align-items: center; gap: 7px; }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: #7c8da3; flex: 0 0 auto; box-shadow: 0 0 0 3px rgba(255,255,255,.03); }
-  .dot.dsh { background: #4da3ff; } .dot.zcode { background: #ffb454; }
-  .dot.claude-code { background: #d97757; } .dot.kimi { background: #7fd18a; }
-  .dot.opencode { background: #e879f9; }
-  .agent .name {
-    background: none; border: 0; padding: 0; color: var(--acc); font-weight: 700;
-    font-size: 13px; cursor: pointer; text-align: left;
+  .sidebar-head h2 { margin: 0; font-size: 12px; letter-spacing: 1.1px; text-transform: uppercase; color: var(--dim); font-weight: 700; }
+  .sidebar-head .count { color: var(--dim2); font-size: 11px; font-weight: 400; letter-spacing: 0; text-transform: none; }
+  .live-dot { margin-left: auto; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px rgba(97,213,155,.1); }
+  #roster { flex: 1; overflow-y: auto; padding: 8px 10px 12px; }
+
+  .conv {
+    width: 100%; display: flex; gap: 11px; align-items: center; text-align: left;
+    border: 1px solid transparent; background: transparent; border-radius: 12px;
+    padding: 10px; color: inherit; margin-bottom: 4px;
   }
-  .agent .name:hover { text-decoration: underline; }
-  .agentlabel { color: var(--dim); font-size: 9.5px; border: 1px solid var(--line2); padding: 0 6px; border-radius: 999px; }
-  .seen { margin-left: auto; color: var(--dim2); font-size: 10.5px; white-space: nowrap; }
+  .conv:hover { background: rgba(255,255,255,.03); }
+  .conv.active { background: rgba(90,162,255,.09); border-color: rgba(90,162,255,.22); }
+  .conv-main { min-width: 0; flex: 1; }
+  .conv-line { display: flex; align-items: baseline; gap: 7px; }
+  .conv-line b { font-size: 13.5px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv-time { margin-left: auto; color: var(--dim2); font-size: 10.5px; white-space: nowrap; }
+  .conv-sub { color: var(--dim2); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
+  .conv-sub .hot { color: var(--req); }
+
+  .ws { margin: 10px 0 2px; }
+  .ws-head { display: flex; align-items: center; gap: 7px; padding: 4px 8px 2px; }
+  .ws-name { font-size: 11px; font-weight: 700; color: var(--dim); letter-spacing: .5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ws-kind { font-size: 9px; color: var(--dim2); border: 1px solid var(--line2); border-radius: 999px; padding: 0 5px; letter-spacing: .3px; }
+  .ws-count { margin-left: auto; color: var(--dim2); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+  .ws-path { padding: 0 8px 4px 26px; color: var(--dim2); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+  .wt-head { display: flex; align-items: baseline; gap: 7px; padding: 3px 8px 3px 26px; color: var(--dim2); font-size: 10.5px; }
+  .wt-head .branch { color: var(--acc); }
+  .wt-head .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+
+  .member {
+    width: 100%; display: flex; gap: 10px; align-items: flex-start; text-align: left;
+    border: 1px solid transparent; background: transparent; border-radius: 11px;
+    padding: 8px 8px 8px 9px; color: inherit; margin: 1px 0;
+  }
+  .member:hover { background: rgba(255,255,255,.03); }
+  .member.active { background: rgba(90,162,255,.1); border-color: rgba(90,162,255,.2); }
+  .member.pending { background: rgba(255,180,84,.05); }
+  .member.pending:hover { background: rgba(255,180,84,.08); }
+  .member-body { min-width: 0; flex: 1; }
+  .member-top { display: flex; align-items: center; gap: 6px; }
+  .member-top b { font-size: 13px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent-pill {
+    font-size: 9.5px; color: var(--dim); border: 1px solid var(--line2);
+    border-radius: 999px; padding: 0 5px; line-height: 1.5; white-space: nowrap;
+  }
+  .seen { margin-left: auto; color: var(--dim2); font-size: 10px; white-space: nowrap; }
+  .member-status {
+    color: var(--fg); font-size: 12px; line-height: 1.45; margin-top: 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .member-status.empty { color: var(--dim2); }
+  .member-sub {
+    display: flex; align-items: center; gap: 6px; margin-top: 1px;
+    color: var(--dim2); font-size: 10.5px; min-width: 0;
+  }
+  .member-sub .branch { color: var(--acc); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pending-chip {
-    color: var(--req); border: 1px solid rgba(255,180,84,.4); background: rgba(255,180,84,.1);
-    border-radius: 999px; padding: 0 6px; font-size: 10px; white-space: nowrap;
+    flex: 0 0 auto; color: var(--req); border: 1px solid rgba(255,180,84,.36);
+    background: rgba(255,180,84,.09); border-radius: 999px; padding: 0 6px;
+    font-size: 9.5px; white-space: nowrap; margin-top: 2px;
   }
-  .agent .status {
-    color: var(--fg); margin: 3px 0 1px; font-size: 12px; overflow-wrap: anywhere;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-  }
-  .agent .status.empty { color: var(--dim2); font-style: italic; }
-  .agent .where { color: var(--dim2); font-size: 10.5px; overflow-wrap: anywhere; }
-  .agent-actions { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
-  .btn {
-    background: var(--panel3); color: var(--fg); border: 1px solid var(--line2);
-    border-radius: 6px; padding: 2px 9px; font-size: 11px; cursor: pointer;
-  }
-  .btn:hover { border-color: var(--acc); color: var(--acc); }
-  .btn.req:hover { border-color: var(--req); color: var(--req); }
-  .btn.warn:hover { border-color: var(--urgent); color: var(--urgent); }
-  .btn:disabled { opacity: .5; cursor: wait; }
 
-  /* ---- feed ---- */
+  .avatar {
+    flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%;
+    display: grid; place-items: center; color: #fff;
+    background: hsl(var(--av-h, 212) 45% 42%);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+    font-size: 12px; font-weight: 700; letter-spacing: .3px; user-select: none;
+  }
+  .avatar.human { background: linear-gradient(145deg, #3dbb8b, #2d8f75); }
+  .avatar.hub {
+    background: linear-gradient(145deg, rgba(90,162,255,.95), rgba(177,140,255,.85));
+    color: #07121f;
+  }
+  .avatar.sm { width: 28px; height: 28px; font-size: 10.5px; }
+
+  /* ---- chat pane -------------------------------------------------------- */
+  .chat { min-height: 0; }
+  .chat-head {
+    display: flex; align-items: center; gap: 12px; min-height: 66px;
+    padding: 10px 16px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(255,255,255,.022), transparent);
+  }
+  .chat-title { min-width: 0; }
+  .chat-title h2 {
+    margin: 0; font-size: 15.5px; font-weight: 700; display: flex; align-items: center; gap: 8px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .chat-title .sub { color: var(--dim2); font-size: 11.5px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .backbtn {
+    flex: 0 0 auto; width: 30px; height: 30px; border-radius: 9px;
+    border: 1px solid var(--line); background: var(--panel2); color: var(--dim);
+    font-size: 15px; line-height: 1;
+  }
+  .backbtn:hover { color: var(--fg); border-color: var(--line2); }
+  .backbtn.hidden { display: none; }
+
   .filters { display: flex; gap: 5px; flex-wrap: wrap; margin-left: auto; }
   .filters button {
     background: transparent; color: var(--dim); border: 1px solid var(--line);
-    border-radius: 999px; padding: 2px 9px; cursor: pointer; font-size: 10.5px;
+    border-radius: 999px; padding: 3px 11px; font-size: 11.5px;
   }
-  .filters button b { font-weight: 600; color: var(--fg); margin-left: 3px; }
+  .filters button b { font-weight: 600; color: var(--fg); margin-left: 4px; font-variant-numeric: tabular-nums; }
   .filters button:hover { border-color: var(--line2); color: var(--fg); }
-  .filters button.on { background: rgba(77,163,255,.12); border-color: rgba(77,163,255,.5); color: var(--acc); }
+  .filters button.on { background: rgba(90,162,255,.12); border-color: rgba(90,162,255,.45); color: var(--acc); }
   .filters button.on b { color: var(--acc); }
-  .msg {
-    position: relative; padding: 9px 14px 9px 13px;
-    border-bottom: 1px solid var(--line); border-left: 3px solid transparent;
+  .filters.hidden { display: none; }
+
+  .feed-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
+  #feed {
+    flex: 1; overflow-y: auto; padding: 16px 20px 18px;
+    background:
+      radial-gradient(700px 300px at 50% 0%, rgba(90,162,255,.035), transparent 70%);
+    scroll-behavior: auto;
   }
-  .msg:hover { background: rgba(255,255,255,.018); }
-  .msg.broadcast { border-left-color: var(--bc); }
-  .msg.direct { border-left-color: var(--dm); }
-  .msg.pending { background: rgba(255,180,84,.055); }
-  .msg.pending:hover { background: rgba(255,180,84,.08); }
-  .msg-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 11px; color: var(--dim); }
-  .aud { font-size: 9.5px; letter-spacing: .4px; border-radius: 999px; padding: 1px 7px; white-space: nowrap; border: 1px solid currentColor; }
-  .aud.broadcast { color: var(--bc); background: rgba(177,140,255,.09); }
-  .aud.direct { color: var(--dm); background: rgba(77,163,255,.09); }
-  .from { color: var(--acc); font-weight: 700; font-size: 12px; background: none; border: 0; padding: 0; cursor: pointer; }
-  .from:hover { text-decoration: underline; }
-  .from.human { color: var(--human); }
-  .ws-chip { color: var(--dim2); font-size: 10px; border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; white-space: nowrap; }
-  .arrow { color: var(--dim2); }
-  .to { color: var(--fg); }
-  .to.all { color: var(--bc); }
-  .badge {
-    font-size: 9.5px; padding: 0 7px; border-radius: 999px; border: 1px solid currentColor;
-    text-transform: uppercase; letter-spacing: .5px; white-space: nowrap;
+  .jump {
+    position: absolute; right: 22px; bottom: 16px; z-index: 5;
+    background: var(--panel3); color: var(--fg); border: 1px solid var(--line2);
+    border-radius: 999px; padding: 6px 13px; font-size: 12px; box-shadow: var(--shadow);
   }
-  .badge.chat { color: var(--chat); } .badge.request { color: var(--req); }
-  .badge.reply { color: var(--reply); } .badge.notice { color: var(--notice); }
-  .badge.urgent { color: var(--urgent); font-weight: 700; }
-  .reqstate { font-size: 10px; white-space: nowrap; }
+  .jump:hover { border-color: var(--acc); color: var(--acc); }
+  .jump.hidden { display: none; }
+
+  .day { display: flex; align-items: center; gap: 12px; margin: 14px 0 16px; color: var(--dim2); font-size: 10.5px; letter-spacing: .4px; }
+  .day::before, .day::after { content: ""; height: 1px; flex: 1; background: linear-gradient(90deg, transparent, var(--line), transparent); }
+
+  .msg { display: flex; align-items: flex-start; gap: 9px; margin: 10px 0; }
+  .msg.cont { margin-top: 4px; }
+  .msg.mine { flex-direction: row-reverse; }
+  .avatar-spacer { flex: 0 0 34px; width: 34px; }
+  .msg-main { min-width: 0; max-width: min(78%, 760px); display: flex; flex-direction: column; align-items: flex-start; }
+  .msg.mine .msg-main { align-items: flex-end; }
+  .msg-meta {
+    display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+    padding: 0 4px 3px; font-size: 11px; color: var(--dim); min-height: 17px;
+  }
+  .msg.mine .msg-meta { justify-content: flex-end; }
+  .msg-name { color: var(--acc); font-weight: 650; font-size: 12px; }
+  .msg.mine .msg-name { color: var(--human); }
+  .msg-dest { color: var(--dim2); font-size: 10.5px; }
+  .aud-pill {
+    font-size: 9px; letter-spacing: .4px; border-radius: 999px; padding: 0 6px; line-height: 1.5;
+    color: var(--bc); border: 1px solid rgba(177,140,255,.4); background: rgba(177,140,255,.09);
+  }
+  .msg-time { color: var(--dim2); font-size: 10.5px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .kind-pill {
+    font-size: 9px; letter-spacing: .4px; text-transform: uppercase;
+    border: 1px solid currentColor; border-radius: 999px; padding: 0 6px; line-height: 1.5;
+  }
+  .kind-pill.chat { color: var(--chat); }
+  .kind-pill.request { color: var(--req); }
+  .kind-pill.reply { color: var(--reply); }
+  .kind-pill.notice { color: var(--notice); }
+  .kind-pill.urgent { color: var(--urgent); font-weight: 700; }
+
+  .bubble {
+    position: relative; background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 4px 14px 14px 14px; padding: 9px 13px;
+    max-width: 100%; min-width: 60px;
+  }
+  .msg.mine .bubble { background: rgba(97,213,155,.08); border-color: rgba(97,213,155,.22); border-radius: 14px 4px 14px 14px; }
+  .msg.broadcast .bubble { background: rgba(177,140,255,.07); border-color: rgba(177,140,255,.28); }
+  .msg.pending .bubble { border-color: rgba(255,180,84,.55); box-shadow: 0 0 0 1px rgba(255,180,84,.12); background: rgba(255,180,84,.06); }
+  .msg.urgent .bubble { border-color: rgba(255,114,114,.55); background: rgba(255,114,114,.07); }
+  .msg-body { white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.62; }
+  .quote {
+    border-left: 2px solid var(--reply); padding: 1px 0 1px 8px; margin: 0 0 6px;
+    color: var(--dim); font-size: 11.5px; max-width: 100%;
+  }
+  .quote b { color: var(--reply); font-weight: 600; }
+  .quote span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msg-foot { margin-top: 3px; color: var(--dim2); font-size: 10.5px; }
+  .reqstate { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; white-space: nowrap; }
   .reqstate.wait { color: var(--req); }
   .reqstate.ok { color: var(--ok); }
   .reqstate.none { color: var(--dim2); }
-  .reqstate button { background: none; border: 0; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; padding: 0; }
-  .msg .time { margin-left: auto; color: var(--dim2); font-size: 10.5px; white-space: nowrap; }
-  .msg-body { margin-top: 3px; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; font-size: 13px; }
-  .msg-foot { margin-top: 3px; color: var(--dim2); font-size: 10.5px; }
-  .msg-foot .re { color: var(--reply); }
-  .msg-actions {
-    position: absolute; top: 7px; right: 10px; display: flex; gap: 5px;
-    opacity: 0; transition: opacity .12s; background: linear-gradient(90deg, transparent, var(--panel) 30%);
-    padding-left: 18px;
+  .reqstate button {
+    background: rgba(255,180,84,.1); border: 1px solid rgba(255,180,84,.35);
+    color: var(--req); border-radius: 999px; padding: 0 7px; font-size: 10px;
   }
-  .msg:hover .msg-actions, .msg:focus-within .msg-actions { opacity: 1; }
-  .msg-actions button {
-    background: var(--panel3); border: 1px solid var(--line2); color: var(--dim);
-    border-radius: 5px; padding: 0 6px; font-size: 10px; cursor: pointer;
-  }
-  .msg-actions button:hover { color: var(--acc); border-color: var(--acc); }
-  .empty { color: var(--dim2); padding: 26px 20px; text-align: center; font-size: 12px; }
-  .empty small { display: block; margin-top: 5px; color: var(--dim2); }
-
-  /* ---- composer ---- */
-  #composer { border-top: 1px solid var(--line); background: var(--panel2); padding: 9px 12px 10px; }
-  .composer-row { display: flex; gap: 8px; }
-  .composer-row > * { min-width: 0; }
-  #target { flex: 1 1 60%; } #kind { flex: 0 1 40%; }
-  #composer select, #composer textarea {
-    background: var(--bg); color: var(--fg); border: 1px solid var(--line2);
-    border-radius: 7px; padding: 6px 8px; font: inherit; font-size: 12px;
-  }
-  #composer select:focus, #composer textarea:focus { outline: none; border-color: var(--acc); }
-  .main-row { margin-top: 7px; align-items: stretch; }
-  #body { flex: 1; resize: vertical; min-height: 40px; max-height: 150px; }
-  #send {
-    background: var(--acc); color: #07121f; font-weight: 700; border: none;
-    border-radius: 7px; padding: 0 20px; cursor: pointer; white-space: nowrap;
-  }
-  #send:hover { filter: brightness(1.08); }
-  #send:disabled { opacity: .5; cursor: wait; }
-  .hintline { color: var(--dim2); font-size: 10.5px; margin-top: 6px; min-height: 14px; }
-  .note { font-size: 10.5px; margin-top: 2px; min-height: 14px; color: var(--dim); }
-  .note.ok { color: var(--ok); } .note.err { color: var(--urgent); }
-  .replybar {
-    display: flex; align-items: center; gap: 8px; margin-top: 7px;
-    background: rgba(177,140,255,.1); border: 1px solid rgba(177,140,255,.35);
-    color: var(--reply); border-radius: 7px; padding: 3px 8px; font-size: 10.5px;
-  }
-  .replybar.hidden { display: none; }
-  .replybar button { margin-left: auto; background: none; border: 0; color: var(--reply); cursor: pointer; font-size: 14px; line-height: 1; }
-
-  /* ---- bottom traffic log (independent from the message reader) ---- */
-  .traf-panel {
-    flex: 0 0 auto; display: flex; flex-direction: column;
-    border-top: 1px solid var(--line); background: var(--bg2); max-height: 224px;
-  }
-  .traf-head { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
-  .traf-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--dim); font-weight: 600; }
-  .traf-meta { margin-left: auto; color: var(--dim2); font-size: 10.5px; white-space: nowrap; }
-  .traf-toggle {
-    background: none; border: 1px solid var(--line); color: var(--dim);
-    border-radius: 5px; padding: 0 7px; font-size: 10px; cursor: pointer;
-  }
-  .traf-toggle:hover { color: var(--acc); border-color: var(--acc); }
-  .traf-body { overflow-y: auto; max-height: 190px; }
-  .traf-panel.collapsed .traf-body { display: none; }
-  .tline {
-    display: flex; align-items: baseline; gap: 6px; padding: 3px 12px;
-    border-bottom: 1px solid rgba(39,50,63,.55); font-size: 10.5px; color: var(--dim);
-    white-space: nowrap;
-  }
-  .tline:last-child { border-bottom: none; }
-  .tline:hover { background: rgba(255,255,255,.02); }
-  .tline.out { background: rgba(77,163,255,.028); }
-  .tline.broadcast { border-left: 2px solid rgba(177,140,255,.5); padding-left: 10px; }
-  .tline.direct { border-left: 2px solid rgba(77,163,255,.35); padding-left: 10px; }
-  .tline .tdir { width: 12px; flex: 0 0 auto; color: var(--dim2); }
-  .tline.out .tdir { color: var(--dm); }
-  .tline .ttime { flex: 0 0 auto; color: var(--dim2); }
-  .tline .tfrom { flex: 0 0 auto; max-width: 138px; overflow: hidden; text-overflow: ellipsis; color: var(--acc); }
-  .tline.out .tfrom { color: var(--human); }
-  .tline .tarrow { flex: 0 0 auto; color: var(--dim2); }
-  .tline .tto { flex: 0 0 auto; max-width: 138px; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
-  .tline .tbody { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
-  .tline .tstate { flex: 0 0 auto; color: var(--dim2); }
-  .tline .tstate.unread { color: var(--req); }
-  .tline .tstate.req { color: var(--req); }
-  .tline button.tdel {
-    flex: 0 0 auto; background: none; border: 0; padding: 0 2px;
-    color: var(--dim2); cursor: pointer; font-size: 11px; line-height: 1;
-  }
-  .tline button.tdel:hover { color: var(--urgent); }
-  .reqstate button.delmsg {
-    background: none; border: 0; color: var(--dim2); cursor: pointer;
-    font: inherit; font-size: 10px; padding: 0 2px; text-decoration: none; margin-left: 2px;
-  }
+  .reqstate button.delmsg { background: none; border: 0; color: var(--dim2); padding: 0 2px; font-size: 10px; }
   .reqstate button.delmsg:hover { color: var(--urgent); }
 
+  .msg-actions {
+    display: flex; gap: 4px; margin: 3px 4px 0; opacity: 0; transition: opacity .12s;
+  }
+  .msg:hover .msg-actions, .msg:focus-within .msg-actions { opacity: 1; }
+  .msg.mine .msg-actions { justify-content: flex-end; }
+  .msg-actions button {
+    background: transparent; border: 1px solid var(--line); color: var(--dim2);
+    border-radius: 6px; padding: 0 7px; font-size: 10px; line-height: 1.7;
+  }
+  .msg-actions button:hover { color: var(--acc); border-color: var(--acc); }
+
+  .empty { color: var(--dim2); padding: 46px 20px; text-align: center; font-size: 13px; }
+  .empty b { display: block; color: var(--dim); font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .empty small { display: block; margin-top: 4px; color: var(--dim2); font-size: 11.5px; }
+
+  /* ---- composer --------------------------------------------------------- */
+  .composer { border-top: 1px solid var(--line); background: var(--panel2); padding: 10px 14px 12px; }
+  .composer-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .send-to {
+    display: flex; align-items: center; gap: 7px; color: var(--dim);
+    background: var(--bg2); border: 1px solid var(--line); border-radius: 10px;
+    padding: 3px 9px 3px 5px; min-width: 0;
+  }
+  .send-to .label { font-size: 10.5px; color: var(--dim2); white-space: nowrap; }
+  #target, #kind {
+    background: transparent; border: 0; color: var(--fg); font-size: 12.5px;
+    padding: 3px 2px; max-width: 220px; outline: none;
+  }
+  #target option, #kind option { background: var(--panel2); color: var(--fg); }
+  .kind-wrap {
+    display: flex; align-items: center; gap: 5px; color: var(--dim2);
+    background: var(--bg2); border: 1px solid var(--line); border-radius: 10px;
+    padding: 3px 8px; font-size: 10.5px;
+  }
+  .replybar {
+    display: flex; align-items: center; gap: 8px; margin: 0 0 8px;
+    background: rgba(177,140,255,.09); border: 1px solid rgba(177,140,255,.3);
+    color: var(--reply); border-radius: 9px; padding: 4px 9px; font-size: 11px;
+  }
+  .replybar.hidden { display: none; }
+  .replybar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .replybar button { margin-left: auto; background: none; border: 0; color: var(--reply); font-size: 15px; line-height: 1; }
+  .composer-main { display: flex; gap: 9px; align-items: stretch; }
+  #body {
+    flex: 1; resize: none; min-height: 46px; max-height: 150px;
+    background: var(--bg); color: var(--fg); border: 1px solid var(--line2);
+    border-radius: 11px; padding: 10px 12px; font-size: 13.5px; line-height: 1.55;
+  }
+  #body:focus { outline: none; border-color: var(--acc); box-shadow: 0 0 0 3px rgba(90,162,255,.09); }
+  #send {
+    flex: 0 0 auto; min-width: 82px; background: var(--acc); color: #06121f;
+    font-weight: 700; border: 0; border-radius: 11px; padding: 0 20px; font-size: 13px;
+  }
+  #send:hover { filter: brightness(1.07); }
+  #send:disabled { opacity: .5; cursor: wait; }
+  .hintline { color: var(--dim2); font-size: 10.5px; margin-top: 6px; min-height: 0; }
+  .hintline:empty { display: none; }
+  .note { font-size: 11px; margin-top: 3px; color: var(--dim); }
+  .note:empty { display: none; }
+  .note.ok { color: var(--ok); } .note.err { color: var(--urgent); }
+
   @media (max-width: 980px) {
-    main { grid-template-columns: 1fr; }
-    .roster-panel { max-height: 46vh; }
-    .chat-panel { height: auto; min-height: 60vh; }
-    #feed { max-height: 52vh; }
-    .traf-panel { max-height: 30vh; }
-    .traf-body { max-height: 24vh; }
-    header { gap: 10px; }
-    .conn { margin-left: 0; }
+    main { grid-template-columns: 1fr; height: auto; padding: 12px; gap: 12px; }
+    .sidebar { max-height: 42vh; }
+    #roster { max-height: 36vh; }
+    .chat { min-height: 68vh; }
+    .filters { display: none; }
+    .right { gap: 9px; }
+    .msg-main { max-width: 86%; }
+  }
+  @media (max-width: 600px) {
+    header { padding: 8px 12px; gap: 9px; }
+    #identity .label { display: none; }
+    #identity input { width: 78px; }
+    .chat-head { padding: 9px 12px; }
+    #feed { padding: 12px; }
+    .msg-main { max-width: 90%; }
+    .avatar, .avatar-spacer { width: 30px; height: 30px; }
+    .avatar { font-size: 11px; }
+    .composer { padding: 9px 11px 10px; }
+    #send { min-width: 64px; padding: 0 13px; }
   }
 </style>
 </head>
 <body>
 <header>
-  <h1><span class="bus">⌘</span> agentbus <span class="tag">LOCAL BUS</span></h1>
-  <span class="meta">up <b id="uptime">–</b> · <b id="nsess">0</b> 会话 · <b id="nws">0</b> 工作区 · <b id="nmsg">0</b> 消息</span>
-  <button id="pendingpill" class="pill hidden" title="单点 request 还没有收到回复">⏳ <b id="npending">0</b> 待回复</button>
-  <span id="conn" class="conn" title="实时连接">● live</span>
-  <label id="identity">身份
-    <input id="ident" value="user-web" spellcheck="false">
-  </label>
+  <div class="brand">
+    <span class="logo">⌘</span>
+    <h1>agentbus <span class="tag">LOCAL BUS</span></h1>
+  </div>
+  <button id="pendingpill" class="pill hidden" title="还有 request 没有收到回复"><b id="npending">0</b> 待回复</button>
+  <div class="right">
+    <span id="conn" class="conn" title="实时连接">● live</span>
+    <label id="identity"><span class="label">我的身份</span>
+      <input id="ident" value="user-web" spellcheck="false">
+    </label>
+  </div>
 </header>
+
 <main>
-  <section class="panel roster-panel">
-    <div class="panel-head">
-      <h2>工作区 <span class="hint">repo → worktree</span></h2>
+  <aside class="panel sidebar">
+    <div class="sidebar-head">
+      <h2>会话 <span class="count" id="rosterCount"></span></h2>
+      <span class="live-dot" title="在线"></span>
     </div>
     <div id="roster"><div class="empty">…</div></div>
-  </section>
-  <section class="panel chat-panel">
-    <div class="panel-head">
-      <h2>消息阅读 <span class="hint">广播 = 所有会话 · 单点 = 一个会话 · 最新在上</span></h2>
+  </aside>
+
+  <section class="panel chat">
+    <div class="chat-head" id="threadHead">
+      <button class="backbtn hidden" id="backAll" type="button" title="返回全部消息">←</button>
+      <span class="avatar hub" id="threadAvatar">#</span>
+      <div class="chat-title">
+        <h2 id="threadTitle">消息流</h2>
+        <div class="sub" id="threadSub">所有会话 · 最新消息在最下方</div>
+      </div>
       <div id="filters" class="filters">
         <button data-filter="all" class="on">全部 <b>0</b></button>
-        <button data-filter="broadcast">📢 广播 <b>0</b></button>
-        <button data-filter="direct">🎯 单点 <b>0</b></button>
-        <button data-filter="pending">⏳ 待回复 <b>0</b></button>
+        <button data-filter="broadcast">广播 <b>0</b></button>
+        <button data-filter="direct">单点 <b>0</b></button>
+        <button data-filter="pending">待回复 <b>0</b></button>
       </div>
     </div>
-    <div id="feed"><div class="empty">…</div></div>
-    <div id="composer">
-      <div class="composer-row">
-        <select id="target" title="收件人"></select>
-        <select id="kind" title="消息类型">
-          <option value="chat">chat · 普通消息</option>
-          <option value="request">request · 请求回复</option>
-          <option value="reply">reply · 回复</option>
-          <option value="notice">notice · 单向通知</option>
-          <option value="urgent">urgent · ⚠ 紧急中断</option>
-        </select>
+    <div class="feed-wrap">
+      <div id="feed"><div class="empty">…</div></div>
+      <button class="jump hidden" id="scrollBottom" type="button">↓ 最新</button>
+    </div>
+    <div class="composer">
+      <div class="composer-top">
+        <div class="send-to">
+          <span class="avatar sm" id="targetAvatar">#</span>
+          <span class="label">发送给</span>
+          <select id="target" title="收件人"></select>
+        </div>
+        <div class="kind-wrap">
+          <span>类型</span>
+          <select id="kind" title="消息类型">
+            <option value="chat">chat · 普通</option>
+            <option value="request">request · 请求回复</option>
+            <option value="reply">reply · 回复</option>
+            <option value="notice">notice · 通知</option>
+            <option value="urgent">urgent · ⚠ 紧急</option>
+          </select>
+        </div>
       </div>
       <div id="replybar" class="replybar hidden">
         <span id="replylabel">↩</span>
         <button id="replyclear" type="button" title="取消回复">×</button>
       </div>
-      <div class="composer-row main-row">
-        <textarea id="body" placeholder="给 agent 发消息…  （Ctrl/⌘+Enter 发送）" rows="2"></textarea>
+      <div class="composer-main">
+        <textarea id="body" placeholder="写消息…  Enter 发送，Shift+Enter 换行" rows="2"></textarea>
         <button id="send">发送</button>
       </div>
       <div id="hint" class="hintline"></div>
       <div id="note" class="note"></div>
     </div>
-    <div id="trafPanel" class="traf-panel">
-      <div class="traf-head">
-        <span class="traf-title">收发日志</span>
-        <span id="trafMeta" class="traf-meta">…</span>
-        <button id="trafToggle" class="traf-toggle" type="button" title="收起/展开收发日志">收起</button>
-      </div>
-      <div id="traffic" class="traf-body"></div>
-    </div>
   </section>
 </main>
+
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -367,8 +459,9 @@ async function api(path, opts) {
 }
 
 let state = { sessions: [], messages: [], now: 0, uptime: 0 };
-let filter = "all";
-let selected = "all";
+let view = "all";            // "all" → hub feed; a session name → that conversation
+let filter = "all";          // applies to the hub feed only
+let selected = "all";        // composer recipient
 let replyTo = null;          // request messageId being answered
 let replyFrom = "";          // peer being answered
 let liveByName = new Map();
@@ -380,15 +473,21 @@ let pendingBySession = new Map();
 let unreadByMsg = new Map(); // messageId -> [sessionName...] still unread
 let groups = [];
 let deleting = new Set();
-let trafficInit = false;
-let trafficCollapsed = false;
 let targetSig = "";
 let sending = false;
+let feedKey = "";
+let feedSig = "";
+let feedInit = false;
 
 const isHuman = (name) => name === "user" || name === "user-web";
 const isHumanTarget = (m) => m.to === "user" || m.to === "user-web";
 const humanName = (name) => name === "user-web" ? "人类 (user-web)" : name === "user" ? "人类" : name;
-const agentClass = (a) => ({ dsh: "dsh", zcode: "zcode", "claude-code": "claude-code", kimi: "kimi", opencode: "opencode" }[a] || "other");
+const displayName = (name) => isHuman(name) ? "我" : name;
+const msgSeq = (m) => {
+  const id = String(m.messageId || "");
+  const n = Number(id.slice(id.lastIndexOf("-") + 1));
+  return Number.isFinite(n) ? n : 0;
+};
 
 const ago = (ts, now) => {
   const s = Math.max(0, now - ts);
@@ -397,13 +496,19 @@ const ago = (ts, now) => {
   if (s < 86400) return Math.floor(s / 3600) + "h";
   return Math.floor(s / 86400) + "d";
 };
-const fmtUptime = (s) => s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" :
-  s < 86400 ? Math.floor(s / 3600) + "h" + Math.floor(s % 3600 / 60) + "m" : Math.floor(s / 86400) + "d";
 const pad2 = (n) => String(n).padStart(2, "0");
 const fmtTime = (ts) => {
   const d = new Date(ts * 1000), now = new Date(state.now ? state.now * 1000 : Date.now());
   const hm = pad2(d.getHours()) + ":" + pad2(d.getMinutes());
   return d.toDateString() === now.toDateString() ? hm : (d.getMonth() + 1) + "-" + pad2(d.getDate()) + " " + hm;
+};
+const dayKey = (ts) => new Date(ts * 1000).toDateString();
+const dayLabel = (ts) => {
+  const d = new Date(ts * 1000), now = new Date(state.now ? state.now * 1000 : Date.now());
+  const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === now.toDateString()) return "今天";
+  if (d.toDateString() === yesterday.toDateString()) return "昨天";
+  return (d.getMonth() + 1) + " 月 " + d.getDate() + " 日";
 };
 const stripGit = (p) => (p || "").replace(/\/\.git\/?$/, "").replace(/\.git\/?$/, "");
 const shortPath = (p) => {
@@ -420,38 +525,26 @@ const wsOf = (s) => {
   const repo = s.repo ? stripGit(s.repo) : "";
   const cwd = s.cwd || "";
   const path = repo || cwd;
-  return {
-    key: repo || (cwd ? "cwd:" + cwd : "unknown"),
-    path, repo, label: baseName(path) || "未归类",
-  };
+  return { key: repo || (cwd ? "cwd:" + cwd : "unknown"), path, repo, label: baseName(path) || "未归类" };
 };
 
-function unreadCount(m) {
-  return (unreadByMsg.get(m.messageId) || []).length;
-}
+function unreadCount(m) { return (unreadByMsg.get(m.messageId) || []).length; }
 
 function analyze() {
   liveByName = new Map(state.sessions.map((s) => [s.name, s]));
   unreadByMsg = new Map(Object.entries(state.unread || {}));
   requestById = new Map();
-  for (const m of state.messages) {
-    if (m.kind === "request") requestById.set(m.messageId, m);
-  }
+  for (const m of state.messages) if (m.kind === "request") requestById.set(m.messageId, m);
   repliesById = new Map();
   for (const m of state.messages) {
     if (!m.replyTo) continue;
     const req = requestById.get(m.replyTo);
     if (!req) continue;
-    // Only the intended recipient answers a direct request. A human replying
-    // to the requester (the hover "reply" action on a peer→peer request) is a
-    // separate conversation and must not clear the pending flag.
-    // For a request addressed to the human side, any reply that is not the
-    // requester echoes back counts (the dashboard identity is configurable).
     const answers = req.to === "all" || (isHumanTarget(req) ? m.from !== req.from : m.from === req.to);
     if (!answers) continue;
-    const arr = repliesById.get(m.replyTo) || [];
+    const arr = repliesById.get(req.messageId) || [];
     arr.push(m);
-    repliesById.set(m.replyTo, arr);
+    repliesById.set(req.messageId, arr);
   }
   pendingDirect = state.messages.filter((m) =>
     m.kind === "request" && m.to !== "all" && !isHumanTarget(m) &&
@@ -462,24 +555,15 @@ function analyze() {
   pendingBySession = new Map();
   for (const m of pendingDirect) pendingBySession.set(m.to, (pendingBySession.get(m.to) || 0) + 1);
 
-  // A session registered before workspace discovery may have no repo field.
-  // If another session in the exact same cwd knows the repo, fold the older
-  // one into that workspace instead of showing a duplicate "dir" group.
+  // Fold a session that has no repo into the workspace of a peer in its cwd.
   const repoByCwd = new Map();
-  for (const s of state.sessions) {
-    if (s.repo && s.cwd) repoByCwd.set(s.cwd, stripGit(s.repo));
-  }
+  for (const s of state.sessions) if (s.repo && s.cwd) repoByCwd.set(s.cwd, stripGit(s.repo));
   const byKey = new Map();
   for (const s of state.sessions) {
     const w = wsOf(s);
     if (!w.repo) {
       const fallback = repoByCwd.get(s.cwd || "");
-      if (fallback) {
-        w.repo = fallback;
-        w.path = fallback;
-        w.key = fallback;
-        w.label = baseName(fallback) || "未归类";
-      }
+      if (fallback) { w.repo = fallback; w.path = fallback; w.key = fallback; w.label = baseName(fallback) || "未归类"; }
     }
     let g = byKey.get(w.key);
     if (!g) {
@@ -489,10 +573,7 @@ function analyze() {
     g.sessions.push(s);
     const cwd = s.cwd || "";
     let wt = g.worktrees.get(cwd || "(unknown)");
-    if (!wt) {
-      wt = { cwd, branch: s.branch || "", sessions: [] };
-      g.worktrees.set(cwd || "(unknown)", wt);
-    }
+    if (!wt) { wt = { cwd, branch: s.branch || "", sessions: [] }; g.worktrees.set(cwd || "(unknown)", wt); }
     wt.sessions.push(s);
   }
   groups = [...byKey.values()];
@@ -500,139 +581,147 @@ function analyze() {
     g.wts = [...g.worktrees.values()].sort((a, b) => (a.cwd || "").localeCompare(b.cwd || ""));
     g.pending = g.sessions.reduce((n, s) => n + (pendingBySession.get(s.name) || 0), 0);
     g.sessions.sort((a, b) =>
-      (pendingBySession.get(b.name) || 0) - (pendingBySession.get(a.name) || 0) || a.name.localeCompare(b.name));
+      (pendingBySession.get(b.name) || 0) - (pendingBySession.get(a.name) || 0) ||
+      (b.last_seen || 0) - (a.last_seen || 0) || a.name.localeCompare(b.name));
   }
   groups.sort((a, b) => (b.pending || 0) - (a.pending || 0) || a.label.localeCompare(b.label) || a.path.localeCompare(b.path));
 }
 
+/* ---- avatars ------------------------------------------------------------- */
+const AVATAR_HUES = [212, 158, 28, 280, 342, 190, 48, 320, 120, 250];
+const AGENT_HUES = { "claude-code": 18, zcode: 282, kimi: 158, dsh: 212, opencode: 290, codex: 205 };
+function hashNum(name) {
+  let h = 0;
+  for (const ch of String(name)) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  return h;
+}
+function hueFor(name) {
+  const h = hashNum(name);
+  const agent = liveByName.get(name)?.agent;
+  if (agent && AGENT_HUES[agent] !== undefined) {
+    // Agent family color plus a small name-derived offset: humans can tell a
+    // Claude session from a ZCode session at a glance, and two sessions of the
+    // same CLI still get distinguishable avatars.
+    return (AGENT_HUES[agent] + (h % 21) - 10 + 360) % 360;
+  }
+  return AVATAR_HUES[h % AVATAR_HUES.length];
+}
+function initials(name) {
+  const parts = String(name).split(/[-_.\s]+/).filter(Boolean);
+  if (!parts.length) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+function avatar(name, cls) {
+  const human = isHuman(name);
+  const hue = human ? 158 : hueFor(name);
+  const label = human ? "我" : initials(name);
+  return `<span class="avatar ${human ? "human " : ""}${cls || ""}" style="--av-h:${hue}" title="${escA(name)}">${esc(label)}</span>`;
+}
+
+/* ---- header / sidebar ---------------------------------------------------- */
 function renderHeader() {
-  const nws = groups.length;
-  $("uptime").textContent = fmtUptime(state.uptime || 0);
-  $("nsess").textContent = state.sessions.length;
-  $("nws").textContent = nws;
-  $("nmsg").textContent = state.messages.length;
   const pendingTotal = pendingDirect.length + pendingHuman.length;
-  const unreadPending = pendingDirect.filter((m) => unreadCount(m) > 0).length;
-  $("pendingpill").innerHTML = `⏳ <b>${pendingTotal}</b> 待回复` +
-    (unreadPending ? ` · <b>${unreadPending}</b> 未读` : "");
-  $("pendingpill").title = `${pendingDirect.length} 个单点 request 等待 agent 回复（其中 ${unreadPending} 个未读）· ${pendingHuman.length} 个等待你回复`;
+  $("npending").textContent = pendingTotal;
   $("pendingpill").classList.toggle("hidden", pendingTotal === 0);
+  $("pendingpill").title = `${pendingDirect.length} 个单点 request 等待 agent 回复 · ${pendingHuman.length} 个等待你回复`;
   document.title = "agentbus" + (pendingTotal ? " · " + pendingTotal + " 待回复" : "");
 }
 
-function renderRoster() {
+function renderSidebar() {
   const el = $("roster");
+  const prevScroll = el.scrollTop;
+  const pendingTotal = pendingDirect.length + pendingHuman.length;
+  $("rosterCount").textContent = state.sessions.length ? `${state.sessions.length} 在线` : "暂无在线";
+  const allLast = state.messages.length ? state.messages[state.messages.length - 1] : null;
+  let html = `
+    <button class="conv ${view === "all" ? "active" : ""}" data-open="all" type="button">
+      <span class="avatar hub">#</span>
+      <span class="conv-main">
+        <span class="conv-line"><b>全部消息</b><span class="conv-time">${allLast ? fmtTime(allLast.ts) : ""}</span></span>
+        <span class="conv-sub">${state.messages.length} 条消息${pendingTotal ? ` · <span class="hot">${pendingTotal} 待回复</span>` : ""}</span>
+      </span>
+    </button>`;
   if (!state.sessions.length) {
-    el.innerHTML = '<div class="empty">没有在线会话<small>启动一个 agent 会话后会自动注册</small></div>';
+    html += `<div class="empty"><b>还没有在线会话</b>启动一个 agent 会话后会自动出现在这里<small>agentbus 会自动注册本地 Claude Code / ZCode / Kimi / DSH</small></div>`;
+    el.innerHTML = html;
+    el.scrollTop = prevScroll;
     return;
   }
-  el.innerHTML = groups.map((g) => {
-    const pending = g.pending ? `<span class="ws-pending">⏳ ${g.pending}</span>` : "";
-    const wtPath = g.wts.length === 1 && g.repo && g.wts[0].cwd && shortPath(g.wts[0].cwd) !== shortPath(g.repo)
-      ? ` · wt ${esc(shortPath(g.wts[0].cwd))}` : "";
-    let body = "";
-    if (g.wts.length > 1) {
-      body = g.wts.map((wt) => `
-        <div class="wt-head"><span class="wt-branch">${esc(wt.branch || "HEAD")}</span><span class="wt-path">${esc(shortPath(wt.cwd))}</span></div>
-        ${wt.sessions.map((s) => agentCard(s)).join("")}`).join("");
-    } else {
-      body = g.sessions.map((s) => agentCard(s)).join("");
-    }
-    return `
-      <div class="ws-group">
-        <div class="ws-head">
-          <div class="ws-line1">
-            <span class="ws-name">⌂ ${esc(g.label)}</span>
-            <span class="ws-kind">${g.repo ? "repo" : "dir"}</span>
-            ${pending}
-            <span class="ws-count">${g.sessions.length} 会话${g.wts.length > 1 ? " · " + g.wts.length + " worktrees" : ""}</span>
-          </div>
-          <div class="ws-path">${esc(shortPath(g.repo || g.path))}${wtPath}</div>
-        </div>
-        ${body}
-      </div>`;
-  }).join("");
-}
-
-function agentCard(s) {
-  const pending = pendingBySession.get(s.name) || 0;
-  const branch = s.branch && s.branch !== "HEAD" ? s.branch : "";
-  const where = [branch, s.pid ? "pid " + s.pid : ""].filter(Boolean).join(" · ");
-  const status = s.status
-    ? `<div class="status" title="${escA(s.status)}">${esc(s.status)}</div>`
-    : '<div class="status empty">（无状态公告）</div>';
-  const pendingTitle = pending
-    ? "待回复的 request：" + pendingDirect.filter((m) => m.to === s.name).map((m) => m.from).join(", ")
-    : "";
-  return `
-    <div class="agent${pending ? " has-pending" : ""}">
-      <div class="agent-top">
-        <span class="dot ${agentClass(s.agent)}"></span>
-        <button class="name" data-act="compose" data-name="${escA(s.name)}" data-kind="chat" title="单点消息 ${escA(s.name)}">${esc(s.name)}</button>
-        <span class="agentlabel">${esc(s.agent || "?")}</span>
-        ${pending ? `<span class="pending-chip" title="${escA(pendingTitle)}">⏳ ${pending} 待回复</span>` : ""}
-        <span class="seen" title="最后活动">${esc(ago(s.last_seen, state.now))} ago</span>
-      </div>
-      ${status}
-      ${where ? `<div class="where">${esc(where)}</div>` : ""}
-      <div class="agent-actions">
-        <button class="btn" data-act="compose" data-name="${escA(s.name)}" data-kind="chat">消息</button>
-        <button class="btn req" data-act="compose" data-name="${escA(s.name)}" data-kind="request" title="定向 request 会唤醒空闲会话并要求回复">请求</button>
-        <button class="btn warn" data-act="compose" data-name="${escA(s.name)}" data-kind="urgent" title="立即中断该会话，慎用">⚠ 中断</button>
-      </div>
-    </div>`;
-}
-
-function renderTargets() {
-  const sig = JSON.stringify(groups.map((g) => [
-    g.key, g.label, g.path, g.wts.map((w) => [w.cwd, w.branch]),
-    g.sessions.map((s) => [s.name, s.agent, s.branch, pendingBySession.get(s.name) || 0]),
-  ]));
-  const sel = $("target");
-  if (sig !== targetSig) {
-    targetSig = sig;
-    const names = new Set(state.sessions.map((s) => s.name));
-    let html = `<optgroup label="📢 广播"><option value="all">📢 广播 · 所有在线会话（${state.sessions.length}）</option></optgroup>`;
-    if (selected !== "all" && !names.has(selected)) {
-      html = `<option value="${escA(selected)}" selected>⚠ 已离线：${esc(selected)}</option>` + html;
-    }
-    for (const g of groups) {
-      html += `<optgroup label="⌂ ${escA(g.label)} · ${escA(shortPath(g.path))}">`;
-      for (const s of g.sessions) {
-        const p = pendingBySession.get(s.name) || 0;
-        const b = s.branch && s.branch !== "HEAD" ? " · " + s.branch : "";
-        html += `<option value="${escA(s.name)}"${s.name === selected ? " selected" : ""}>${esc(s.name)} · ${esc(s.agent || "?")}${esc(b)}${p ? " · ⏳" + p : ""}</option>`;
+  for (const g of groups) {
+    html += `<div class="ws">
+      <div class="ws-head"><span class="ws-name">${esc(g.label)}</span><span class="ws-kind">${g.repo ? "repo" : "dir"}</span><span class="ws-count">${g.sessions.length}</span></div>
+      <div class="ws-path">${esc(shortPath(g.repo || g.path))}</div>`;
+    for (const wt of g.wts) {
+      if (g.wts.length > 1) {
+        html += `<div class="wt-head"><span class="branch">${esc(wt.branch || "HEAD")}</span><span class="path">${esc(shortPath(wt.cwd))}</span></div>`;
       }
-      html += "</optgroup>";
+      for (const s of wt.sessions) html += memberRow(s, g.wts.length === 1);
     }
-    sel.innerHTML = html;
+    html += `</div>`;
   }
-  if (selected === "all" || liveByName.has(selected)) sel.value = selected;
+  el.innerHTML = html;
+  el.scrollTop = prevScroll;
 }
 
-function msgAudience(m) {
-  if (m.to === "all") return { cls: "broadcast", label: "📢 广播", n: m.recipients };
-  return { cls: "direct", label: "🎯 单点", n: 0 };
+function memberRow(s, showBranch) {
+  const pending = pendingBySession.get(s.name) || 0;
+  const status = s.status
+    ? `<div class="member-status" title="${escA(s.status)}">${esc(s.status)}</div>`
+    : `<div class="member-status empty">（无状态公告）</div>`;
+  const bits = [];
+  if (showBranch && s.branch && !["HEAD", "main", "master"].includes(s.branch)) bits.push(`<span class="branch">${esc(s.branch)}</span>`);
+  return `
+    <button class="member ${view === s.name ? "active" : ""}${pending ? " pending" : ""}" data-open="${escA(s.name)}" type="button" title="${escA((s.cwd || "") + (s.branch ? " · " + s.branch : ""))}">
+      ${avatar(s.name)}
+      <span class="member-body">
+        <span class="member-top"><b>${esc(s.name)}</b><span class="agent-pill">${esc(s.agent || "?")}</span><span class="seen">${esc(ago(s.last_seen, state.now))}</span></span>
+        ${status}
+        <span class="member-sub">${bits.join(" · ")}</span>
+      </span>
+      ${pending ? `<span class="pending-chip" title="待回复的 request">⏳ ${pending}</span>` : ""}
+    </button>`;
 }
 
+/* ---- thread header ------------------------------------------------------- */
+function renderThreadHead() {
+  const member = view !== "all" ? liveByName.get(view) : null;
+  $("backAll").classList.toggle("hidden", view === "all");
+  $("filters").classList.toggle("hidden", view !== "all");
+  const av = $("threadAvatar");
+  if (view === "all") {
+    av.className = "avatar hub"; av.textContent = "#"; av.removeAttribute("style");
+    $("threadTitle").textContent = "消息流";
+    $("threadSub").textContent = "所有会话 · 最新消息在最下方";
+  } else {
+    av.className = "avatar"; av.style.setProperty("--av-h", hueFor(view)); av.textContent = isHuman(view) ? "我" : initials(view);
+    if (isHuman(view)) av.classList.add("human");
+    $("threadTitle").textContent = member ? member.name : view;
+    const bits = [];
+    if (member) bits.push(member.agent || "agent");
+    if (member && member.status) bits.push(member.status);
+    if (member) bits.push(shortPath(member.cwd || ""));
+    $("threadSub").textContent = bits.filter(Boolean).join(" · ");
+  }
+  renderFilters();
+}
+
+/* ---- feed ---------------------------------------------------------------- */
 function reqState(m) {
   if (m.kind !== "request") return "";
   const replies = repliesById.get(m.messageId) || [];
   const unread = unreadCount(m);
-  const unreadTag = unread ? ` · 未读 ${unread}` : "";
   const del = unread
     ? ` <button class="delmsg" data-act="delete" data-id="${escA(m.messageId)}" title="删除未读 pending 消息">✕</button>` : "";
   if (replies.length) return `<span class="reqstate ok">✓ 已回复${replies.length > 1 ? " ×" + replies.length : ""}</span>`;
-  if (m.to === "all") return `<span class="reqstate none">0 回复${unreadTag}${del}</span>`;
+  if (m.to === "all") return `<span class="reqstate none">0 回复${del}</span>`;
   if (isHumanTarget(m)) {
-    if (liveByName.has(m.from)) {
-      return `<span class="reqstate wait">⏳ 待你回复 <button data-act="reply" data-id="${escA(m.messageId)}" data-from="${escA(m.from)}">回复</button></span>`;
-    }
+    if (liveByName.has(m.from)) return `<span class="reqstate wait">⏳ 待你回复 <button data-act="reply" data-id="${escA(m.messageId)}" data-from="${escA(m.from)}">回复</button></span>`;
     return '<span class="reqstate none">⏳ 未回复</span>';
   }
   if (liveByName.has(m.to)) {
     if (!unread) return '<span class="reqstate wait">⏳ 待回复 · 已读未回</span>';
-    return `<span class="reqstate wait">⏳ 待回复${unreadTag}${del}</span>`;
+    return `<span class="reqstate wait">⏳ 待回复 · 未读 ${unread}${del}</span>`;
   }
   return '<span class="reqstate none">⏳ 未回复</span>';
 }
@@ -643,60 +732,121 @@ function isPendingReq(m) {
   return liveByName.has(m.to);
 }
 
-function renderFeed() {
-  const el = $("feed");
-  const msgs = state.messages.filter((m) => {
-    if (filter === "broadcast") return m.to === "all";
-    if (filter === "direct") return m.to !== "all";
-    if (filter === "pending") return isPendingReq(m);
-    return true;
-  });
-  if (!msgs.length) {
-    const what = filter === "broadcast" ? "还没有广播消息" : filter === "direct" ? "还没有单点消息" : filter === "pending" ? "没有待回复的单点 request" : "还没有消息";
-    el.innerHTML = `<div class="empty">${what}<small>${filter === "pending" ? "定向 request 会唤醒空闲会话并等待回复" : ""}</small></div>`;
-    return;
+function visibleMessages() {
+  let msgs = state.messages;
+  if (view !== "all") msgs = msgs.filter((m) => m.to !== "all" && (m.from === view || m.to === view));
+  if (view === "all" && filter !== "all") {
+    msgs = msgs.filter((m) => filter === "broadcast" ? m.to === "all"
+      : filter === "direct" ? m.to !== "all"
+      : filter === "pending" ? isPendingReq(m) : true);
   }
-  const scrollTop = el.scrollTop;
-  el.innerHTML = msgs.map((m) => {
-    const aud = msgAudience(m);
-    const pending = isPendingReq(m);
-    const sess = liveByName.get(m.from);
-    const w = sess ? wsOf(sess) : null;
-    const fromHuman = isHuman(m.from);
-    const toLabel = m.to === "all" ? "所有会话" : humanName(m.to);
-    const wsChip = w ? `<span class="ws-chip">⌂ ${esc(w.label)}</span>` : "";
-    const requester = m.replyTo ? requestById.get(m.replyTo) : null;
-    const foot = m.kind === "reply"
-      ? `<div class="msg-foot"><span class="re">↩ 回复${requester ? " " + esc(requester.from) : ""}</span></div>`
-      : "";
-    const acts = sess ? `
-      <div class="msg-actions">
-        <button data-act="reply" data-id="${escA(m.messageId)}" data-from="${escA(m.from)}" title="回复 ${escA(m.from)}">↩</button>
-        <button data-act="direct" data-from="${escA(m.from)}" title="单点消息 ${escA(m.from)}">单点</button>
-      </div>` : "";
-    const fromEl = fromHuman
-      ? `<span class="from human">${esc(humanName(m.from))}</span>`
-      : `<button class="from" data-act="direct" data-from="${escA(m.from)}" title="单点消息 ${escA(m.from)}">${esc(humanName(m.from))}</button>`;
-    return `
-      <article class="msg ${aud.cls}${pending ? " pending" : ""}" id="msg-${escA(m.messageId)}">
-        ${acts}
-        <div class="msg-head">
-          <span class="aud ${aud.cls}">${aud.label}${aud.cls === "broadcast" && aud.n ? " · " + aud.n : ""}</span>
-          ${fromEl}
-          ${wsChip}
-          <span class="arrow">→</span>
-          <span class="to${m.to === "all" ? " all" : ""}">${esc(toLabel)}</span>
-          <span class="badge ${esc(m.kind || "chat")}">${esc(m.kind || "chat")}</span>
-          ${reqState(m)}
-          <span class="time">${fmtTime(m.ts)}</span>
-        </div>
-        <div class="msg-body">${esc(m.body)}</div>
-        ${foot}
-      </article>`;
-  }).join("");
-  el.scrollTop = Math.min(scrollTop, Math.max(0, el.scrollHeight));
+  return msgs;
 }
 
+function renderFeed() {
+  const el = $("feed");
+  const msgs = visibleMessages();
+  const key = view + "|" + filter;
+  const signature = key + "|" + state.sessions.map((s) => s.name).join(",") + "|" +
+    msgs.map((m) => `${m.messageId}:${unreadCount(m)}:${isPendingReq(m) ? 1 : 0}`).join(",");
+  if (signature === feedSig && feedInit) {
+    toggleJump();
+    return;
+  }
+  const changedView = key !== feedKey;
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 90;
+  const prevTop = el.scrollTop;
+
+  if (!msgs.length) {
+    const text = view !== "all" ? "这个会话还没有消息" : filter === "broadcast" ? "还没有广播消息"
+      : filter === "direct" ? "还没有单点消息" : filter === "pending" ? "没有待回复的 request" : "还没有消息";
+    el.innerHTML = `<div class="empty"><b>${text}</b>${view === "all" ? "消息会自动出现在这里" : "从下方输入框发送第一条消息"}<small>${filter === "pending" ? "定向 request 会唤醒空闲会话并等待回复" : "所有消息按时间从上到下排列"}</small></div>`;
+    feedKey = key;
+    feedSig = signature;
+    feedInit = true;
+    $("scrollBottom").classList.add("hidden");
+    return;
+  }
+
+  let html = "";
+  let prevDay = "";
+  let prevFrom = "";
+  let prevTs = 0;
+  for (const m of msgs) {
+    const dk = dayKey(m.ts);
+    if (dk !== prevDay) {
+      html += `<div class="day"><span>${dayLabel(m.ts)}</span></div>`;
+      prevDay = dk;
+      prevFrom = "";
+    }
+    const cont = prevFrom === m.from && m.ts - prevTs < 300 && !isPendingReq(m);
+    html += messageHTML(m, cont);
+    prevFrom = m.from;
+    prevTs = m.ts;
+  }
+  el.innerHTML = html;
+  feedKey = key;
+  feedSig = signature;
+
+  if (changedView || nearBottom || !feedInit) el.scrollTop = el.scrollHeight;
+  else el.scrollTop = prevTop;
+  feedInit = true;
+  toggleJump();
+}
+
+function messageHTML(m, cont) {
+  const mine = isHuman(m.from);
+  const pending = isPendingReq(m);
+  const broadcast = m.to === "all";
+  const agent = liveByName.get(m.from);
+  const requester = m.replyTo ? requestById.get(m.replyTo) : null;
+  const quote = m.kind === "reply" && requester
+    ? `<div class="quote"><b>↩ ${esc(humanName(requester.from))}</b><span>${esc((requester.body || "").replace(/\s+/g, " ").slice(0, 120))}</span></div>` : "";
+  const aud = broadcast
+    ? `<span class="aud-pill">广播</span>`
+    : (view === "all" || m.from === view ? `<span class="msg-dest">→ ${esc(humanName(m.to))}</span>` : "");
+  const state = reqState(m);
+  const acts = `
+    <div class="msg-actions">
+      ${!mine && liveByName.has(m.from) ? `<button data-act="reply" data-id="${escA(m.messageId)}" data-from="${escA(m.from)}" title="回复 ${escA(m.from)}">↩ 回复</button>` : ""}
+      ${!mine && view !== m.from ? `<button data-act="open" data-name="${escA(m.from)}" title="打开与 ${escA(m.from)} 的会话">对话</button>` : ""}
+      ${unreadCount(m) ? `<button data-act="delete" data-id="${escA(m.messageId)}" title="删除未读消息">删除</button>` : ""}
+    </div>`;
+  return `
+    <article class="msg ${mine ? "mine" : ""} ${broadcast ? "broadcast" : ""}${pending ? " pending" : ""}${cont ? " cont" : ""}${m.kind === "urgent" ? " urgent" : ""}" data-id="${escA(m.messageId)}">
+      ${cont ? '<span class="avatar-spacer"></span>' : avatar(m.from)}
+      <div class="msg-main">
+        <div class="msg-meta">
+          ${cont || mine ? "" : `<span class="msg-name">${esc(displayName(m.from))}</span>`}
+          ${agent && !cont && !mine ? `<span class="agent-pill">${esc(agent.agent || "?")}</span>` : ""}
+          ${aud}
+          ${cont || (m.kind || "chat") === "chat" ? "" : `<span class="kind-pill ${esc(m.kind)}">${esc(m.kind)}</span>`}
+          ${state}
+          <span class="msg-time" title="${new Date(m.ts * 1000).toLocaleString()}">${fmtTime(m.ts)}</span>
+        </div>
+        <div class="bubble">
+          ${quote}
+          <div class="msg-body">${esc(m.body)}</div>
+        </div>
+        ${acts}
+      </div>
+    </article>`;
+}
+
+function toggleJump() {
+  const el = $("feed");
+  const away = el.scrollHeight - el.scrollTop - el.clientHeight > 120;
+  $("scrollBottom").classList.toggle("hidden", !away);
+}
+
+function scrollFeedToBottom(smooth) {
+  const el = $("feed");
+  if (smooth) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  else el.scrollTop = el.scrollHeight;
+  toggleJump();
+}
+
+/* ---- filters / composer -------------------------------------------------- */
 function renderFilters() {
   const counts = { all: state.messages.length, broadcast: 0, direct: 0, pending: pendingDirect.length + pendingHuman.length };
   for (const m of state.messages) {
@@ -711,100 +861,50 @@ function renderFilters() {
   }
 }
 
-function renderTraffic() {
-  const el = $("traffic");
-  const rows = state.messages.slice().reverse(); // a log reads oldest -> newest
-  const unreadMsgs = rows.filter((m) => unreadCount(m) > 0).length;
-  $("trafMeta").textContent = `全部 ${rows.length} · 未读 ${unreadMsgs} 条`;
-  $("trafToggle").textContent = trafficCollapsed ? "展开" : "收起";
-  $("trafPanel").classList.toggle("collapsed", trafficCollapsed);
-  if (!rows.length) {
-    el.innerHTML = '<div class="empty" style="padding:10px">还没有收发记录</div>';
-    return;
-  }
-  const atBottom = !trafficInit || el.scrollTop + el.clientHeight >= el.scrollHeight - 8;
-  const scrollTop = el.scrollTop;
-  el.innerHTML = rows.map((m) => {
-    const aud = msgAudience(m);
-    const unread = unreadCount(m);
-    const human = isHuman(m.from);
-    const req = m.kind === "request";
-    const answered = req && (repliesById.get(m.messageId) || []).length > 0;
-    const toHuman = isHumanTarget(m);
-    const fromLabel = human ? humanName(m.from) : m.from;
-    const toLabel = m.to === "all" ? "所有会话" : humanName(m.to);
-    let stateText = "已投递", stateCls = "";
-    if (unread) { stateText = `未读 ${unread}`; stateCls = "unread"; }
-    else if (req) { stateText = answered ? "已回复" : "已读未回"; stateCls = "req"; }
-    else if (toHuman) stateText = "人工";
-    else if (m.to === "all") stateText = `广播${m.recipients ? " " + m.recipients : ""}`;
-    const del = unread
-      ? ` <button class="tdel" data-act="delete" data-id="${escA(m.messageId)}" title="删除未读消息">✕</button>` : "";
-    return `
-      <div class="tline ${aud.cls}${human ? " out" : ""}">
-        <span class="tdir" title="${human ? "人类发出" : "agent 发出"}">${human ? "↗" : "↘"}</span>
-        <span class="ttime">${fmtTime(m.ts)}</span>
-        <span class="tfrom">${esc(fromLabel)}</span>
-        <span class="tarrow">→</span>
-        <span class="tto">${esc(toLabel)}</span>
-        <span class="badge ${esc(m.kind || "chat")}">${esc(m.kind || "chat")}</span>
-        <span class="tbody" title="${escA(m.body)}">${esc(m.body)}</span>
-        <span class="tstate ${stateCls}">${stateText}</span>${del}
-      </div>`;
-  }).join("");
-  if (atBottom) el.scrollTop = el.scrollHeight;
-  else el.scrollTop = Math.min(scrollTop, el.scrollHeight);
-  trafficInit = true;
-}
-
-async function deleteMessage(id) {
-  if (!id || deleting.has(id)) return;
-  const m = state.messages.find((x) => x.messageId === id);
-  if (!m) { setNote("消息已不存在", false); await refresh(); return; }
-  const names = unreadByMsg.get(id) || [];
-  if (!names.length) { setNote("这条消息已经被读取，不能删除", false); await refresh(); return; }
-  const target = m.to === "all" ? "所有会话" : humanName(m.to);
-  const snippet = (m.body || "").replace(/\s+/g, " ").slice(0, 100);
-  const ok = confirm(`删除这条未读消息？\n\n[${m.kind || "chat"}] ${m.from} → ${target}\n${snippet}\n\n未读会话：${names.join(", ")}\n它会从这些会话的收件箱和全局日志中移除。`);
-  if (!ok) return;
-  deleting.add(id);
-  try {
-    const r = await api("delete", { method: "POST", body: JSON.stringify({ messageId: id }) });
-    if (r.ok) {
-      setNote(`已删除未读消息（${r.deleted} 个收件箱）`, true);
-      await refresh();
-    } else {
-      setNote("删除失败：" + (r.error || "unknown error"), false);
+function renderTargets() {
+  const sig = JSON.stringify(groups.map((g) => [
+    g.key, g.label, g.path, g.wts.map((w) => [w.cwd, w.branch]),
+    g.sessions.map((s) => [s.name, s.agent, s.branch, pendingBySession.get(s.name) || 0]),
+  ]));
+  const sel = $("target");
+  if (sig !== targetSig) {
+    targetSig = sig;
+    const names = new Set(state.sessions.map((s) => s.name));
+    let html = `<optgroup label="广播"><option value="all">广播 · 所有在线会话（${state.sessions.length}）</option></optgroup>`;
+    if (selected !== "all" && !names.has(selected)) {
+      html = `<option value="${escA(selected)}" selected>⚠ 已离线：${esc(selected)}</option>` + html;
     }
-  } catch (e) {
-    setNote("删除失败：网络/权限错误", false);
-  } finally {
-    deleting.delete(id);
+    for (const g of groups) {
+      html += `<optgroup label="${escA(g.label)} · ${escA(shortPath(g.path))}">`;
+      for (const s of g.sessions) {
+        const p = pendingBySession.get(s.name) || 0;
+        const b = s.branch && s.branch !== "HEAD" ? " · " + s.branch : "";
+        html += `<option value="${escA(s.name)}"${s.name === selected ? " selected" : ""}>${esc(s.name)} · ${esc(s.agent || "?")}${esc(b)}${p ? " · ⏳" + p : ""}</option>`;
+      }
+      html += "</optgroup>";
+    }
+    sel.innerHTML = html;
   }
+  if ([...sel.options].some((o) => o.value === selected)) sel.value = selected;
+  const ta = $("targetAvatar");
+  if (isHuman(selected)) { ta.className = "avatar sm human"; ta.textContent = "我"; }
+  else if (selected === "all") { ta.className = "avatar sm hub"; ta.textContent = "全"; ta.removeAttribute("style"); }
+  else { ta.className = "avatar sm"; ta.style.setProperty("--av-h", hueFor(selected)); ta.textContent = initials(selected); }
 }
 
 function updateHint() {
   const kind = $("kind").value;
   const target = $("target").value;
   const name = target === "all" ? "所有在线会话" : target;
-  let text;
-  if (kind === "request") {
-    text = target === "all"
-      ? "广播 request：发往所有在线会话，不会唤醒空闲会话，可能收到多人回复。"
-      : `定向 request：会唤醒空闲的 ${name}，并要求它回一句话（推荐用于提问）。`;
-  } else if (kind === "urgent") {
-    text = target === "all"
-      ? "⚠ urgent 广播会唤醒所有空闲会话，只用于真实损害或人类明确要求。"
-      : `⚠ 立即中断 ${name}：只用于真实损害或人类明确要求。`;
-  } else if (kind === "notice") {
-    text = "单向通知：不期待回复，对方下次活动时送达。";
-  } else if (kind === "reply") {
-    text = replyTo ? `↩ 回复 ${replyFrom} 的这条消息（自动带 replyTo）` : "reply：建议从消息右上角「↩」进入，自动携带 replyTo。";
-  } else {
-    text = target === "all"
-      ? "广播 chat：不唤醒空闲会话，对方下次活动时送达。"
-      : `单点 chat 给 ${name}：不唤醒空闲会话；需要答复请用 request。`;
-  }
+  let text = "";
+  if (kind === "request") text = target === "all"
+    ? "广播 request：不会唤醒空闲会话，可能收到多人回复。"
+    : `定向 request：会唤醒空闲的 ${name} 并要求一句答复。`;
+  else if (kind === "urgent") text = target === "all"
+    ? "⚠ urgent 广播会唤醒所有空闲会话，只用于真实中断。"
+    : `⚠ 立即中断 ${name}：只用于真实损害或人类明确要求。`;
+  else if (kind === "notice") text = "单向通知：不期待回复，对方下次活动时送达。";
+  else if (kind === "reply") text = replyTo ? `↩ 回复 ${replyFrom} 的消息，自动带 replyTo。` : "reply：建议从消息上的「↩ 回复」进入。";
   $("hint").textContent = text;
   $("replybar").classList.toggle("hidden", !replyTo);
   if (replyTo) {
@@ -817,17 +917,20 @@ function updateHint() {
 function renderComposer() {
   renderTargets();
   if (replyTo) $("kind").value = "reply";
-  else if (!$("kind").value) $("kind").value = "chat";
+  else if (!$("kind").value || $("kind").value === "reply") $("kind").value = "chat";
+  $("body").placeholder = view === "all"
+    ? "广播给所有在线会话…  Enter 发送，Shift+Enter 换行"
+    : `发送给 ${view}…  Enter 发送，Shift+Enter 换行`;
   updateHint();
 }
 
+/* ---- state changes ------------------------------------------------------- */
 function renderAll() {
   renderHeader();
-  renderRoster();
+  renderSidebar();
+  renderThreadHead();
   renderComposer();
   renderFeed();
-  renderFilters();
-  renderTraffic();
 }
 
 function setNote(text, ok) {
@@ -836,12 +939,21 @@ function setNote(text, ok) {
   el.className = "note" + (text ? (ok ? " ok" : " err") : "");
 }
 
-function compose(to, kind) {
-  selected = to || "all";
-  const sel = $("target");
-  if ([...sel.options].some((o) => o.value === selected)) sel.value = selected;
+function openView(name, focus) {
+  view = name || "all";
+  selected = view === "all" ? "all" : view;
+  if (view === "all") filter = "all";
+  clearReply();
+  renderAll();
+  if (focus) $("body").focus();
+}
+
+function compose(name, kind) {
+  view = name === "all" ? "all" : name;
+  selected = name || "all";
   $("kind").value = kind || "chat";
   if (kind !== "reply") clearReply();
+  renderAll();
   updateHint();
   $("body").focus();
 }
@@ -850,9 +962,13 @@ function startReply(id, from) {
   if (!liveByName.has(from)) { setNote("对方已离线，无法回复", false); return; }
   replyTo = id;
   replyFrom = from;
+  view = from;
   selected = from;
-  compose(from, "reply");
+  renderAll();
+  $("kind").value = "reply";
+  updateHint();
   setNote("", true);
+  $("body").focus();
 }
 
 function clearReply() {
@@ -889,6 +1005,7 @@ async function send() {
       if (payload.kind === "reply") $("kind").value = "chat";
       updateHint();
       await refresh();
+      scrollFeedToBottom();
     }
   } catch (e) {
     setNote("发送失败：网络/权限错误", false);
@@ -904,7 +1021,10 @@ async function refresh() {
     if (next && next.ok) {
       state = next;
       state.sessions = state.sessions || [];
-      state.messages = (state.messages || []).slice().sort((a, b) => b.ts - a.ts);
+      state.messages = (state.messages || [])
+        .map((m, i) => ({ m, i }))
+        .sort((a, b) => a.m.ts - b.m.ts || msgSeq(a.m) - msgSeq(b.m) || b.i - a.i)
+        .map((x) => x.m);
       analyze();
       renderAll();
       $("conn").textContent = "● live";
@@ -918,60 +1038,59 @@ async function refresh() {
 
 // -- events -----------------------------------------------------------------
 $("roster").addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-act='compose']");
-  if (!b) return;
-  compose(b.dataset.name, b.dataset.kind || "chat");
+  const b = e.target.closest("[data-open]");
+  if (b) openView(b.dataset.open, false);
 });
 $("feed").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-act]");
   if (!b) return;
   if (b.dataset.act === "reply") startReply(b.dataset.id, b.dataset.from);
   else if (b.dataset.act === "delete") deleteMessage(b.dataset.id);
-  else if (b.dataset.act === "direct") {
-    if (liveByName.has(b.dataset.from)) compose(b.dataset.from, "chat");
-    else setNote("对方已离线", false);
-  }
+  else if (b.dataset.act === "open") openView(b.dataset.name, false);
 });
-$("traffic").addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-act='delete']");
-  if (b) deleteMessage(b.dataset.id);
+$("threadHead").addEventListener("click", (e) => {
+  if (e.target.closest("#backAll")) openView("all", false);
 });
 $("filters").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-filter]");
   if (!b) return;
   filter = b.dataset.filter;
-  renderFeed();
   renderFilters();
+  renderFeed();
 });
 $("pendingpill").addEventListener("click", () => {
-  filter = "pending";
-  renderFeed();
-  renderFilters();
-  $("feed").scrollTop = 0;
+  view = "all"; filter = "pending"; selected = "all";
+  renderAll();
+  requestAnimationFrame(() => {
+    const nodes = $("feed").querySelectorAll(".msg.pending");
+    if (nodes.length) nodes[nodes.length - 1].scrollIntoView({ block: "center", behavior: "smooth" });
+  });
 });
-$("trafToggle").addEventListener("click", () => {
-  trafficCollapsed = !trafficCollapsed;
-  try { localStorage.setItem("ab-traf-collapsed", trafficCollapsed ? "1" : "0"); } catch (e) {}
-  renderTraffic();
-});
+$("scrollBottom").addEventListener("click", () => scrollFeedToBottom(true));
+$("feed").addEventListener("scroll", toggleJump);
 $("target").addEventListener("change", () => {
   const v = $("target").value;
-  if (replyTo && v !== replyFrom) {
-    clearReply();
-    $("kind").value = "chat";
-  }
+  if (replyTo && v !== replyFrom) { clearReply(); $("kind").value = "chat"; }
   selected = v;
-  updateHint();
+  view = v;
+  renderAll();
+  $("body").focus();
 });
 $("kind").addEventListener("change", () => { if ($("kind").value !== "reply") clearReply(); updateHint(); });
 $("replyclear").addEventListener("click", () => {
   clearReply();
   $("kind").value = "chat";
   updateHint();
+  renderComposer();
 });
 $("send").addEventListener("click", send);
 $("body").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
+  if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.isComposing) {
+    // Enter sends (Shift+Enter for a newline), like a chat app.
+    e.preventDefault();
+    send();
+  }
 });
 $("ident").addEventListener("change", () => {
   const v = $("ident").value.trim() || "user-web";
@@ -981,7 +1100,6 @@ $("ident").addEventListener("change", () => {
 try {
   const saved = localStorage.getItem("ab-identity");
   if (saved) $("ident").value = saved;
-  trafficCollapsed = localStorage.getItem("ab-traf-collapsed") === "1";
 } catch (e) {}
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 

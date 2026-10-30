@@ -1,0 +1,76 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: build and publish
+    runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: tests
+        run: |
+          go test -race ./...
+          ./test/setup.sh
+          ./scripts/test-npm.sh
+
+      - name: build artifacts
+        run: ./scripts/build-release.sh
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          assets="dist/agentbus-*.tar.gz dist/SHA256SUMS"
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release upload "v$VERSION" $assets --clobber
+          else
+            gh release create "v$VERSION" $assets \
+              --title "agentbus v$VERSION" --generate-notes
+          fi
+
+      - name: publish npm packages
+        if: env.NPM_TOKEN != ''
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for name in agentbus-cli-linux-x64 agentbus-cli-linux-arm64 \
+                      agentbus-cli-darwin-x64 agentbus-cli-darwin-arm64; do
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "skip $name@$VERSION (already published)"
+            else
+              npm publish "dist/$name-$VERSION.tgz" --access public
+            fi
+          done
+          if npm view "agentbus-cli@$VERSION" version >/dev/null 2>&1; then
+            echo "skip agentbus-cli@$VERSION (already published)"
+          else
+            npm publish "dist/agentbus-cli-$VERSION.tgz" --access public
+          fi
+
+      - name: npm publishing skipped
+        if: env.NPM_TOKEN == ''
+        run: echo "::warning::NPM_TOKEN is not configured; GitHub release created, npm publish skipped."

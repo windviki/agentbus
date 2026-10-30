@@ -1,0 +1,48 @@
+{
+  "name": "agentbus-cli",
+  "version": "0.1.0",
+  "description": "Local message bus for concurrent AI agent sessions: presence, peer messaging and zero-token idle coordination across Claude Code, ZCode, Kimi Code and DSH.",
+  "keywords": [
+    "ai-agents",
+    "agent-orchestration",
+    "claude-code",
+    "zcode",
+    "kimi",
+    "dsh",
+    "multi-agent",
+    "message-bus",
+    "cli"
+  ],
+  "homepage": "https://github.com/windviki/agentbus",
+  "bugs": {
+    "url": "https://github.com/windviki/agentbus/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/windviki/agentbus.git",
+    "directory": "npm/cli"
+  },
+  "license": "MIT",
+  "author": "Viki",
+  "bin": {
+    "agentbus": "bin/agentbus.js"
+  },
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "linux",
+    "darwin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "agentbus-cli-linux-x64": "0.1.0",
+    "agentbus-cli-linux-arm64": "0.1.0",
+    "agentbus-cli-darwin-x64": "0.1.0",
+    "agentbus-cli-darwin-arm64": "0.1.0"
+  }
+}

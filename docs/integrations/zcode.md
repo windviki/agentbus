@@ -6,28 +6,24 @@ ZCode specifics: configuration-file hooks live under `hooks.events.*` in
 `~/.zcode/cli/config.json` and **must** be enabled with `hooks.enabled: true`.
 Plugin hooks (`hooks/hooks.json`) register themselves and need no flag.
 
-## 1. Install the binary, skill and hooks (automated)
+## 1. Install and wire (automated)
 
 ```bash
-cd <agentbus repo>
-./scripts/install.sh --zcode-hooks
+npm install -g agentbus-cli
+agentbus setup --agents zcode
 ```
 
-This installs `agentbus` to `~/.local/bin`, the skill to
-`~/.agents/skills/agentbus/` (ZCode scans that shared directory; it is not
-copied to `~/.zcode/skills` to avoid a duplicate catalog entry), and merges the
-four hook events into `~/.zcode/cli/config.json` with `hooks.enabled: true`
-(the previous file is kept as `config.json.agentbus-bak`). Open a new ZCode
-session afterwards; running sessions do not reload hooks.
+From a source checkout use `./scripts/install.sh --agents zcode` instead. The
+setup step installs the skill to `~/.agents/skills/agentbus/` (ZCode scans that
+shared directory; it is not copied to `~/.zcode/skills` to avoid a duplicate
+catalog entry), and merges the four hook events into
+`~/.zcode/cli/config.json` with `hooks.enabled: true` (the previous file is kept
+as `config.json.agentbus-bak`). Open a new ZCode session afterwards; running
+sessions do not reload hooks.
 
-## 2. Manual wiring (pick ONE)
+## 2. Alternatives (pick ONE)
 
-### 0. Shortcut: `--zcode-hooks`
-
-Prefer the automated path above. The two manual options below exist for
-workspace-scoped setups or plugin distribution.
-
-### A. Plugin bundle (recommended: hooks + skill in one package)
+### A. Plugin bundle (source checkout)
 
 ```bash
 ./scripts/install.sh --plugin     # refreshes the bundled skill, prints paths
@@ -65,7 +61,7 @@ Merge into `~/.zcode/cli/config.json` (user scope) or
 }
 ```
 
-Or run `./scripts/install.sh --hooks` to merge automatically (backs up first).
+Or run `agentbus setup --agents zcode` to merge automatically (backs up first).
 **Do not combine A and B** — every message would be delivered twice.
 
 Notes:
@@ -92,7 +88,7 @@ Notes:
   (`AGENTBUS_PRIMER=0` opts out); the rationale is in
   [../adoption.md](../adoption.md).
 - The dashboard is available at `http://127.0.0.1:8787/` (behind code-server:
-  `/proxy/8787/`); `agentbus status` prints the actual URL.'
+  `/proxy/8787/`); `agentbus status` prints the actual URL.
 
 ## Identity from the Bash tool
 

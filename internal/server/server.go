@@ -14,13 +14,13 @@ import (
 	"syscall"
 	"time"
 
-	"agentbus/internal/bus"
-	"agentbus/internal/client"
-	"agentbus/internal/proto"
-	"agentbus/internal/web"
+	"github.com/windviki/agentbus/internal/bus"
+	"github.com/windviki/agentbus/internal/client"
+	"github.com/windviki/agentbus/internal/proto"
+	"github.com/windviki/agentbus/internal/web"
 )
 
-const Version = "0.1.0"
+var Version = "0.1.0"
 
 type Server struct {
 	home      string

@@ -17,17 +17,17 @@ the Stop wake, or an explicit `agentbus inbox`.
 ## Install (automated)
 
 ```bash
-cd <agentbus repo>
-./scripts/install.sh --kimi-hooks
+npm install -g agentbus-cli
+agentbus setup --agents kimi
 ```
 
-This:
-- installs `agentbus` to `~/.local/bin`;
+From a source checkout use `./scripts/install.sh --agents kimi`. The setup step:
 - copies the skill to `~/.kimi-code/skills/agentbus/`;
-- appends four `[[hooks]]` entries (SessionStart, UserPromptSubmit,
+- appends a managed `[[hooks]]` block (SessionStart, UserPromptSubmit,
   PostToolUse, Stop, SessionEnd) to `~/.kimi-code/config.toml`
-  (backup: `config.toml.agentbus-bak`);
-- appends the session contract to **`~/.kimi-code/AGENTS.md`** between
+  (backup: `config.toml.agentbus-bak`; re-running setup replaces the block
+  instead of duplicating it);
+- upserts the session contract in **`~/.kimi-code/AGENTS.md`** between
   `<!-- agentbus:begin -->` markers. Kimi loads this global instruction file
   every session, which is how new sessions learn the bus without a user
   reminder (SessionStart stdout is ignored by Kimi).

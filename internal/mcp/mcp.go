@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"agentbus/internal/client"
-	"agentbus/internal/procinfo"
-	"agentbus/internal/proto"
-	"agentbus/internal/server"
+	"github.com/windviki/agentbus/internal/client"
+	"github.com/windviki/agentbus/internal/procinfo"
+	"github.com/windviki/agentbus/internal/proto"
+	"github.com/windviki/agentbus/internal/server"
 )
 
 const protocolVersion = "2025-06-18"

@@ -9,8 +9,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"agentbus/internal/bus"
-	"agentbus/internal/proto"
+	"github.com/windviki/agentbus/internal/bus"
+	"github.com/windviki/agentbus/internal/proto"
 )
 
 // hookContextJSON wraps text as hook output that Claude Code / ZCode inject

@@ -1,35 +1,42 @@
-# agentbus 文档
+# agentbus documentation
 
-按角色选择阅读路径：
+[中文文档](zh/README.md) · [Project README](../README.md)
 
-| 你是 | 先读 | 再读 |
+Choose a reading path:
+
+| You are | Start here | Then |
 |---|---|---|
-| 想快速用起来 | [../README.md](../README.md) | [integrations/](integrations/) 里对应 agent |
-| 想理解设计取舍 | [design.md](design.md) | [research.md](research.md) |
-| 要接新 harness | [protocol.md](protocol.md) | [integrations/generic.md](integrations/generic.md)、[adoption.md](adoption.md) |
-| 关心 agent 会不会真的用 | [adoption.md](adoption.md) | [design.md](design.md) §5 |
-| 改代码 / 跑验证 | [testing.md](testing.md) | [protocol.md](protocol.md) |
+| Getting it running | [install.md](install.md) | the integration guide for your agent |
+| Understanding the design | [design.md](design.md) | [research.md](research.md) |
+| Adding a new harness | [protocol.md](protocol.md) | [integrations/generic.md](integrations/generic.md), [adoption.md](adoption.md) |
+| Wondering whether agents will actually use it | [adoption.md](adoption.md) | [design.md](design.md) §5 |
+| Changing code / validating a release | [testing.md](testing.md) | [publishing.md](publishing.md) |
 
-## 目录
+## Contents
 
-| 文档 | 内容 |
+| Document | Contents |
 |---|---|
-| [design.md](design.md) | 目标、token 经济学、架构、身份与生命周期、消息模型与投递梯子、Web/A2A/MCP 边界、防风暴、可靠性、安全、失败模式、未来方向 |
-| [protocol.md](protocol.md) | 参考手册：CLI、hook JSON、unix socket op、消息类型、HTTP/A2A、MCP、环境变量 |
-| [adoption.md](adoption.md) | 会话如何接受这套通讯：未铺垫时的行为、session contract、信任边界、自主协商时机、实测记录 |
-| [testing.md](testing.md) | 单元 / e2e / 插件 / 互操作测试矩阵与复现命令 |
-| [research.md](research.md) | 现有方案调研与自建理由 |
-| [integrations/claude-code.md](integrations/claude-code.md) | Claude Code：hooks 或插件包 |
-| [integrations/zcode.md](integrations/zcode.md) | ZCode：配置 hooks 或插件包 |
-| [integrations/dsh.md](integrations/dsh.md) | DSH：原生插件（会话注入 + 工具） |
-| [integrations/kimi.md](integrations/kimi.md) | Kimi Code：hooks + 全局 AGENTS.md + skill |
-| [integrations/generic.md](integrations/generic.md) | 其他 CLI：skill 或 MCP |
+| [install.md](install.md) | npm / source install, per-agent setup, uninstall, troubleshooting |
+| [design.md](design.md) | goals, token economics, architecture, identity and lifecycle, message model and delivery ladder, Web/A2A/MCP boundaries, anti-storm measures, reliability, security, failure modes, future work |
+| [protocol.md](protocol.md) | reference: CLI, hook JSON, unix socket ops, message kinds, HTTP/A2A, MCP, environment variables |
+| [adoption.md](adoption.md) | how a session accepts the bus: unprimed behaviour, session contract, trust boundary, when to negotiate, measured results |
+| [testing.md](testing.md) | unit / e2e / plugin / interop test matrix and reproduction commands |
+| [research.md](research.md) | prior art and why agentbus is built |
+| [publishing.md](publishing.md) | release checklist: versioning, cross-compilation, npm publishing, GitHub release |
+| [integrations/claude-code.md](integrations/claude-code.md) | Claude Code: hooks or the plugin bundle |
+| [integrations/zcode.md](integrations/zcode.md) | ZCode: config hooks or the plugin bundle |
+| [integrations/dsh.md](integrations/dsh.md) | DSH: native plugin (session injection + tools) |
+| [integrations/kimi.md](integrations/kimi.md) | Kimi Code: hooks + global AGENTS.md + skill |
+| [integrations/generic.md](integrations/generic.md) | any other CLI: skill or MCP |
 
-## 维护约定
+## Maintenance conventions
 
-- 行为或设计变化：先改 `design.md` / `protocol.md`，再同步根 README 与
-  `integrations/`。
-- 实测结果：写进 `adoption.md` 与 `testing.md`，标注日期、agent 版本、模型；
-  没有复现命令的结论不算结论。
-- 集成目录（`integrations/<agent>/`）只放可安装的资产（plugin、hooks 片段），
-  说明统一放本文档树，避免两处漂移。
+- **English is canonical** (`docs/`), Chinese is a mirror (`docs/zh/`). Change
+  the English text first, then mirror it; keep commands, code blocks and
+  environment variable names verbatim.
+- Behaviour or design changes: update `design.md` / `protocol.md` first, then
+  the root READMEs and `integrations/`.
+- Measured results belong in `adoption.md` and `testing.md` with a date, agent
+  version and model. A claim without a reproduction command is not a result.
+- `integrations/<agent>/` holds installable assets only (plugin, hook
+  fragments); prose lives in this documentation tree so it cannot drift.

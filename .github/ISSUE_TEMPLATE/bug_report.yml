@@ -1,0 +1,72 @@
+name: Bug report
+description: Something does not work — hook delivery, setup, dashboard, daemon, CLI.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please run `agentbus doctor` first and paste its
+        output below; it answers most installation questions.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what did you get instead?
+      placeholder: "Messages are not injected after the agent goes idle; I expected a request to wake it."
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: The exact commands or steps. A two-terminal scenario is ideal.
+      placeholder: |
+        1. agentbus register --name alice
+        2. agentbus send alice "hello"
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: agentbus
+    attributes:
+      label: agentbus version
+      description: "`agentbus version` (or the npm package version)."
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and version
+      description: Claude Code / ZCode / Kimi Code / DSH / other, plus its version.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and architecture
+      placeholder: "Linux 6.8 x86_64 / macOS 15 arm64"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install?
+      options:
+        - npm (agentbus-cli)
+        - source checkout (scripts/install.sh)
+        - go install
+        - other / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`agentbus doctor` output"
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: "`agentbus log -n 20`, `~/.agentbus/hook.log`, daemon stderr, or dashboard state. Remove secrets first."
+      render: text

@@ -1,0 +1,22 @@
+{
+  "name": "agentbus-cli-darwin-x64",
+  "version": "0.1.0",
+  "description": "Prebuilt agentbus binary for darwin x64.",
+  "homepage": "https://github.com/windviki/agentbus",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/windviki/agentbus.git",
+    "directory": "npm/platform/darwin-x64"
+  },
+  "license": "MIT",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/agentbus",
+    "LICENSE"
+  ]
+}

@@ -2,7 +2,7 @@
 // the agentbus unix socket.
 package proto
 
-import "agentbus/internal/bus"
+import "github.com/windviki/agentbus/internal/bus"
 
 // Request is one client -> daemon call. Session-scoped ops identify the
 // caller by ID (the stable session key); senders may also use From directly

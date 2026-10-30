@@ -30,7 +30,21 @@ The plugin needs:
 - the same `AGENTBUS_HOME` as the peers you want to reach (default
   `~/.agentbus`).
 
-### A. Local checkout (verified path)
+### A. Automated (recommended)
+
+```bash
+npm install -g agentbus-cli
+agentbus setup --agents dsh
+```
+
+From a source checkout use `./scripts/install.sh --agents dsh`. Setup extracts
+the embedded plugin to `~/.agentbus/integrations/dsh-plugin` and runs
+`dsh plugin --profile web add <that path>` when `dsh` is on `PATH`. The package
+declares its bundle patch, so DSH inserts the loader row itself; restart the
+host afterwards (or rely on config HMR). If `dsh` is not on `PATH`, setup
+prints the exact command to run manually.
+
+### B. Local checkout (verified path)
 
 Write a patch overlay and pass it to the DSH launcher:
 
@@ -50,7 +64,7 @@ For the web profile, append the same `insert` row to
 `~/.dsh/profiles/web/cordis.patch.yml` and restart the host (or rely on
 config HMR). The loader accepts absolute paths / file URLs for `insert.name`.
 
-### B. Install as a package
+### C. Install as a package
 
 ```bash
 dsh plugin --profile web add /abs/path/to/agentbus/integrations/dsh/plugin
@@ -75,7 +89,7 @@ has no config schema yet — configure through environment variables.
    tools + daemon connectivity).
 3. A second session sends a `request`; the plugin injects it and the model can
    answer with `agentbus_reply` (see the interop test and the measured results
-   in [adoption.md](../../docs/adoption.md) §6).
+   in [adoption.md](../adoption.md) §6).
 4. `agentbus log` shows the reply with `kind=reply` and a `replyTo` pointing at
    the request.
 

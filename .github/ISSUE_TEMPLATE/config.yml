@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/windviki/agentbus/tree/main/docs
+    about: Installation, protocol, design notes and per-agent guides.
+  - name: Security report
+    url: https://github.com/windviki/agentbus/security/advisories/new
+    about: Please report vulnerabilities privately, not in a public issue.

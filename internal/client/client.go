@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"agentbus/internal/proto"
+	"github.com/windviki/agentbus/internal/proto"
 )
 
 func SocketPath(home string) string { return filepath.Join(home, "bus.sock") }

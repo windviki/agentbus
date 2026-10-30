@@ -1,5 +1,11 @@
+# build output
 /agentbus
 /agentbus-*
 dist/
-*.log
 *.test
+*.log
+
+# npm staging
+node_modules/
+npm/platform/*/bin/
+*.tgz

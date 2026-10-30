@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"agentbus/internal/procinfo"
+	"github.com/windviki/agentbus/internal/procinfo"
 )
 
 var (

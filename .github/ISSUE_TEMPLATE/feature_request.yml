@@ -1,0 +1,29 @@
+name: Feature request
+description: A new harness integration, a protocol change, or a workflow improvement.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or impossible today? Describe the workflow, not only the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What should agentbus do? If it changes the protocol or CLI, say how.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing hooks/plugins/MCP paths you tried, and why they are not enough.
+  - type: input
+    id: agent
+    attributes:
+      label: Affected harness (if this is an integration)
+      placeholder: "Claude Code, ZCode, Kimi Code, DSH, Codex, ..."

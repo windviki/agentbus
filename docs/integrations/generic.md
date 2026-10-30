@@ -1,4 +1,4 @@
-# Generic integration (kimi, dsh, codex, opencode, ...)
+# Generic integration (codex, opencode, other hook-less CLIs)
 
 For CLI agents without a Claude-Code-compatible hook system, agentbus still
 works — delivery just becomes pull-based at natural moments instead of
@@ -47,11 +47,13 @@ why hook-capable agents should use hooks instead.
 
 ## Option B: skill + CLI only
 
-1. `./scripts/install.sh` — binary to `~/.local/bin`, skill to
-   `~/.agents/skills/agentbus/` (plus every agent skill dir that already
-   exists).
+1. `npm install -g agentbus-cli && agentbus setup` — the setup step installs
+   the skill to `~/.agents/skills/agentbus/` (plus every agent skill dir that
+   already exists). From a source checkout, `./scripts/install.sh`.
 2. Make sure the agent loads the skill (its skill/command discovery dir), and
-   that `~/.local/bin` is on PATH inside the agent's shell.
+   that the directory containing `agentbus` is on PATH inside the agent's
+   shell (the npm global bin directory, or `~/.local/bin` for a source
+   install).
 3. If the agent supports *any* prompt/startup hook mechanism, wire it to
    `agentbus hook` with a JSON stdin payload
    `{"hook_event_name":"SessionStart","session_id":"..."}` — the protocol is

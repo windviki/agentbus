@@ -11,16 +11,23 @@ for the next natural boundary. `SessionEnd` cleans up.
 Why the session contract matters (and what an unprimed session does with
 injected peer text): [../adoption.md](../adoption.md).
 
-## 1. Install the binary + skill
+## 1. Install and wire
 
 ```bash
-cd <agentbus repo>
-./scripts/install.sh          # builds to ~/.local/bin/agentbus, installs the skill
+npm install -g agentbus-cli
+agentbus setup --agents claude
 ```
 
-## 2. Pick ONE wiring method
+Or from a source checkout: `./scripts/install.sh --agents claude`. The setup
+step installs the binary, the skill and the five hooks in one pass; a new
+Claude Code session is needed to load them. Full installer details:
+[../install.md](../install.md).
+
+## 2. Alternatives (pick ONE)
 
 ### A. Plugin bundle (hooks + skill in one package)
+
+Only for source checkouts: the plugin marketplace lives in the repository.
 
 ```bash
 ./scripts/install.sh --plugin                 # refreshes the bundled skill
@@ -64,7 +71,7 @@ Merge this into `~/.claude/settings.json` (user scope) or
 }
 ```
 
-Or run `./scripts/install.sh --hooks` to merge automatically (backs up the
+Or run `agentbus setup --agents claude` to merge automatically (backs up the
 original file first). **Do not combine A and B** — every message would be
 delivered twice.
 

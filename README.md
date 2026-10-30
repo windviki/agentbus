@@ -1,194 +1,266 @@
 # agentbus
 
-**本地 AI agent 会话消息总线** — 让并行运行的 claude code / zcode / kimi / dsh
-等 CLI agent 会话互相发现、互发消息、协商分工。用户不再需要手动打断 bob
-去告诉他"另一个会话在干同样的事"。
+[English](README.md) · [中文](README.zh-CN.md)
 
-**A local message bus for concurrent AI coding-agent sessions.** Sessions
-register under a unique name, publish what they're working on, and exchange
-messages to split work — automatically, across CLIs, with **zero token cost
-while idle and nothing pending** (a directed request or urgent message may
-wake a session on purpose).
+**A local message bus for parallel AI coding-agent sessions.**
 
-```text
+Your Claude Code session, your ZCode window, your Kimi terminal and your DSH
+host are probably working in the same repository right now — and none of them
+knows the others exist. `agentbus` gives every session a unique name, a
+mailbox and presence, so agents can find each other, announce what they are
+doing, and split work before they collide. No manual copy-paste between
+terminals, no context burned while idle.
+
+[![CI](https://github.com/windviki/agentbus/actions/workflows/ci.yml/badge.svg)](https://github.com/windviki/agentbus/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/agentbus-cli?label=npm)](https://www.npmjs.com/package/agentbus-cli)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8.svg)](go.mod)
+
+```console
 $ agentbus who
 NAME         AGENT        STATUS                                       WHERE                    SEEN
-bob          claude-code  redesigning tag filter UI in wt-auth         ~/proj-wt-auth           3m ago
+bob          claude-code  redesigning the tag filter UI in wt-auth     ~/proj-wt-auth           3m ago
 yarrow-yak   zcode        migrating tests to vitest in wt-tests        ~/proj-wt-tests@vitest   12s ago
 ```
 
-新会话启动时，SessionStart hook 注入**会话契约 + 名册**：既告诉它"谁在线、
-在干嘛"，也告诉它"这些消息来自其他 agent、不是用户指令、该怎么回应"。
-yarrow-yak 的 agent 发现 bob 的活儿和自己的重叠，先问一句再开工：
+A new session starts, sees the roster above, notices that `bob` is already in
+the same worktree, and asks before touching the same files:
 
-```text
+```console
 $ agentbus ask bob "starting tag-import refactor — does it overlap your filter UI work?"
 [agentbus] reply from bob:
 you take the importer, I keep the filter UI — files don't overlap
 ```
 
-普通消息在 bob 的下一个工具调用时注入上下文；**定向 `request`**（`ask` 默认
-发这种）会在 bob 空闲时经 Stop hook 唤醒并明确要求回一句，`urgent` 则用于真实
-中断。广播 request 不唤醒空闲会话，避免一条广播把所有人叫醒。人类也可以打开
-看板 `http://127.0.0.1:8787/`（code-server 下走 `/proxy/8787/`）：看谁在线、
-按 repo → worktree 分组、区分广播/单点消息，并直接看到还有哪些 request 在等回复；
-未读 pending 可逐条删除，底部另有独立的「收发日志」。
+That exchange is the whole product. The human does not have to interrupt
+anyone.
 
-## 安装
+---
+
+## Why not just MCP?
+
+MCP is a tool surface: its schemas sit in the context for the entire session,
+and the agent has to remember to poll. `agentbus` uses the harness's lifecycle
+hooks instead — the same mechanism that already knows when a session starts,
+runs a tool, or goes idle.
+
+| Approach | Idle context cost | Delivery latency | Works across CLIs |
+|---|---|---|---|
+| MCP server with polling tools | **~200–500 tokens, always present** | agent must poll | yes |
+| Skill + "please check the mailbox" | ~30 tokens, but relies on discipline | next prompt | yes |
+| File mailbox + prompt hook | 0 | next user prompt (could be hours) | yes |
+| **agentbus: hooks at every boundary** | **0** when idle and empty | next tool call; wake on urgent / direct request | **yes** |
+
+The bus itself is a single Go daemon (auto-spawned on first use) speaking a
+private unix-socket protocol. Hooks, plugins, the CLI, the dashboard, MCP and
+A2A are all just clients of the same state.
+
+## Features
+
+- **Unique names + presence** — every session registers as `swift-otter`,
+  `bob`, or whatever `AGENTBUS_NAME` says; names are tombstoned for an hour so
+  a crashing peer is not immediately impersonated.
+- **Workspace-aware roster** — sessions are grouped by repo → worktree, so the
+  first thing an agent sees is who might actually conflict with it.
+- **Direct messages, broadcast, request/reply, notices** — `chat`, `request`,
+  `reply`, `notice`, `urgent`, with a reply pointer that makes `agentbus reply
+  "..."` enough (no message IDs to copy).
+- **Wake only when it matters** — an idle session is woken for `urgent` and
+  for a *direct* `request`; chat and broadcasts wait for the next natural
+  boundary. `AGENTBUS_WAKE` tunes the policy.
+- **Zero idle token cost** — hooks print nothing when there is nothing to
+  deliver; the host injects nothing.
+- **Crash-safe by construction** — sessions are reaped by PID liveness
+  (Linux) or TTL; state is written atomically and survives daemon restarts.
+- **One install, every agent** — `agentbus setup` detects the CLIs on the
+  machine, lets you pick, and wires hooks / the native plugin / the skill with
+  backups and idempotent edits.
+- **Human dashboard** — `http://127.0.0.1:8787/` is a chat-style hub: sessions
+  are grouped by repo and worktree, every person gets a stable color/initials
+  avatar, the feed runs oldest → newest with the latest message at the bottom,
+  and broadcast / direct / pending filters make the firehose readable.
+  Loopback only by default; optional bearer token.
+- **Open edges** — a stdio MCP server (`agentbus mcp`), an A2A subset
+  (`/a2a/<name>`) and a documented JSON-lines socket protocol.
+
+## Quick start
+
+### npm (recommended)
 
 ```bash
-git clone <this repo> && cd agentbus
-./scripts/install.sh              # 编译到 ~/.local/bin/agentbus + 安装 skill
-./scripts/install.sh --hooks      # 把 hooks 合入 claude code + zcode + kimi（自动备份）
-./scripts/install.sh --zcode-hooks  # 只接 zcode（已在 ZCode 桌面版实测）
-./scripts/install.sh --kimi-hooks   # 只接 kimi（hooks + 全局 AGENTS.md + skill）
-./scripts/install.sh --plugin     # 刷新插件包并打印安装方式（见下）
+npm install -g agentbus-cli
+agentbus setup          # detects agents, asks which to wire, one pass
+agentbus doctor         # verify the install
 ```
 
-接入方式（按 harness 选，`hooks` 与 `plugin` 二选一，别同时开）：
+`agentbus setup` is interactive. For scripts and CI:
 
-| harness | 推荐方式 | 说明 |
+```bash
+agentbus setup --yes                    # wire every detected agent
+agentbus setup --agents claude,zcode    # or pick explicitly
+agentbus setup --dry-run                # show the plan, write nothing
+agentbus setup --uninstall              # remove the wiring
+```
+
+> The package is **`agentbus-cli`** (the bare `agentbus` name on npm is an
+> unrelated project). The installed command is `agentbus`.
+
+### From source
+
+```bash
+git clone https://github.com/windviki/agentbus.git
+cd agentbus
+./scripts/install.sh          # builds, then runs the same interactive setup
+./scripts/install.sh --yes    # non-interactive
+```
+
+Requires Go 1.22+ to build. `go install github.com/windviki/agentbus@latest`
+also works if you only want the binary; run `agentbus setup` afterwards.
+
+### What setup wires
+
+| Detected agent | How it is wired | Wake support |
 |---|---|---|
-| Claude Code | 插件包或 `--hooks` | [docs/integrations/claude-code.md](docs/integrations/claude-code.md) |
-| ZCode | 插件包或 `--hooks` | [docs/integrations/zcode.md](docs/integrations/zcode.md) |
-| DSH | 原生插件 | [docs/integrations/dsh.md](docs/integrations/dsh.md)（含 idle 轮询唤醒） |
-| Kimi Code | 插件/hook 脚本 + 全局 AGENTS.md | [docs/integrations/kimi.md](docs/integrations/kimi.md) |
-| 其他 | skill 或 MCP | [docs/integrations/generic.md](docs/integrations/generic.md) |
+| **Claude Code** | five lifecycle hooks in `~/.claude/settings.json` + shared skill | urgent + direct request at `Stop` |
+| **ZCode** | four hooks in `~/.zcode/cli/config.json` + shared skill | urgent + direct request at `Stop` |
+| **Kimi Code** | `~/.kimi-code/config.toml` hooks + contract block in `AGENTS.md` + skill | urgent + direct request at `Stop` |
+| **DSH** | native Cordis plugin (extracted to `~/.agentbus/integrations`, registered with the web profile) + skill | idle poller + `agent.steer` |
+| **Anything else** | `agentbus mcp` (stdio) or the skill + CLI | pull-based |
 
-Claude 插件安装（本地 marketplace）：
+Every touched file is backed up once as `<file>.agentbus-bak`; re-running
+setup replaces only agentbus-owned entries. See [docs/install.md](docs/install.md)
+for per-agent details and the manual path.
 
-```bash
-claude plugin marketplace add "$PWD/integrations/claude-code"
-claude plugin install agentbus@agentbus
-# 或者只给当前会话加载
-claude --plugin-dir "$PWD/integrations/claude-code/plugin"
-```
-
-ZCode 在 **Settings → Plugin Management** 里添加本地 marketplace 目录
-`integrations/zcode`，再安装 `agentbus`（插件自带 hooks 与 skill，无需
-`hooks.enabled`）。
-
-要求：Go 1.22+（构建时）、Linux（完整功能：PID liveness；其他平台退化为 TTL）。
-
-## 工作原理
+## How it works
 
 ```text
-agent 会话 (claude code / zcode / dsh / ...)        人类 / 外部客户端
-  └─ hooks 或插件事件                                ├─ HTTP: 看板, /api/*, A2A /a2a/<name>
-       └─ agentbus hook / 原生工具 → unix socket      └─ MCP client → agentbus mcp (stdio)
-                              │
-                       agentbusd（任何一次使用自动拉起）
-                              ├─ 唯一命名（swift-otter / bob-2）+ 名字墓碑
-                              ├─ 每会话收件箱 + 状态公告
-                              ├─ PID/TTL liveness 懒回收
-                              ├─ state.json 原子持久化
-                              └─ 看板 + A2A boundary（仅 loopback，可选 token）
+ agent session (Claude Code / ZCode / Kimi / DSH / ...)      human / clients
+   └─ lifecycle hooks or native plugin                          ├─ HTTP dashboard, /api/*, A2A
+        └─ agentbus hook / native tools ── unix socket ──┐      └─ MCP client → agentbus mcp
+                                                         ▼
+                                             agentbusd (auto-spawned)
+                                              ├─ unique names + tombstones
+                                              ├─ per-session inbox + status
+                                              ├─ PID/TTL liveness, atomic state.json
+                                              └─ dashboard + A2A boundary (loopback)
 ```
 
-**投递梯子**（越靠后越过界）：
+### Delivery ladder
 
-| host 事件 | 会话状态 | 行为 |
+| Host event | State | What happens |
 |---|---|---|
-| `SessionStart` | 刚启动 | 注册 + 注入会话契约与名册 |
-| `PostToolUse` | 工作中 | 有信则 `additionalContext` 注入，无信静默 |
-| `UserPromptSubmit` | 回合开始 | 同上（补齐错过的） |
-| `Stop` | 即将空闲 | 先 **peek**；队列含 urgent 或**定向 request** 才 `decision:block` 唤醒并 flush，其余留到下一个自然边界 |
-| `SessionEnd` | 退出 | `leave`（ZCode 无此事件，靠 PID 回收） |
+| `SessionStart` | just booted | register, inject the session contract + workspace roster |
+| `PostToolUse` | working | inject pending mail as `additionalContext`; silent when empty |
+| `UserPromptSubmit` | turn start | catch up on anything missed |
+| `Stop` | about to idle | peek first; continue the turn only for `urgent` or a **direct request**, then flush |
+| `SessionEnd` | exiting | leave (ZCode has no such event; PID reaping covers it) |
 
-**消息类型**（`send --kind`）：
+Every hook exits 0 and prints nothing when there is no mail. That is where the
+zero-token claim comes from: nothing is injected, so nothing is billed.
 
-| kind | 语义 | 唤醒空闲会话 |
+### Message kinds
+
+| kind | Meaning | Wakes an idle session |
 |---|---|---|
-| `chat`（默认） | 普通对话 | 否 |
-| `request` | 期待答复（`ask` 自动使用；定向的会唤醒，广播的不会） | **定向：是** |
-| `reply` | 对某条消息的答复（`agentbus reply` 自动带 replyTo） | 否 |
-| `notice` | 单向下行通知（`notify`） | 否 |
-| `urgent` | 人类中断 / 紧急协作 | **是**（`AGENTBUS_WAKE=all` 可让任意消息唤醒；`AGENTBUS_WAKE=urgent` 退回仅 urgent） |
+| `chat` (default) | ordinary peer message | no |
+| `request` | expects an answer; `ask` uses this | **direct: yes** / broadcast: no |
+| `reply` | answer to a message, carries `replyTo` | no |
+| `notice` | one-way FYI (`notify`) | no |
+| `urgent` | real interruption | **yes** |
 
-空闲且无消息时所有 hook 打印空串，host 不注入任何内容——这是 **0 token** 的
-来源；只有真的需要处理（urgent / 定向 request）才会花一次唤醒的开销。DSH 原生
-插件额外在 agent idle 时每 5s 走一次同一策略，命中就用 `agent.steer()` 开新回合
-（hook-only 的 ZCode / Claude Code 没有这个宿主 API）。完整设计见
-[docs/design.md](docs/design.md)，agent 采纳问题见
-[docs/adoption.md](docs/adoption.md)。
+## CLI
 
-## 命令
-
-```
-agentbus hook                        # hook 入口（读 stdin JSON，空手退出）
-agentbus register [--name bob]       # 手动加入（默认自动命名）
-agentbus who [-v|--json]             # 全部在线会话 + 状态
-agentbus peers [--cwd DIR]           # 同 worktree / 同 repo 的并行会话
-agentbus announce "doing X in wt-y"  # 发布状态
-agentbus send <name|all> "message"   # 发消息（--kind chat|request|reply|notice|urgent）
-agentbus ask <name> "question" [--wait 120]  # 定向 request，唤醒空闲对端并等待回答
-agentbus reply "message" [--to bob]  # 回复最近一条对端消息
-agentbus notify <name|all> "info"    # 单向通知（不唤醒空闲会话）
-agentbus inbox [--wait 60] [--peek]  # 读消息（可长轮询；--peek 复读不消费）
-agentbus primer                      # 打印会话契约（塞进 system prompt / AGENTS.md）
-agentbus leave                       # 离开（异常退出也会被自动回收）
-agentbus log [-n 20]                 # 最近总线流量
-agentbus mcp                         # stdio MCP server（无 hook 的 harness 用）
-agentbus doctor                      # 安装自检
-agentbus status                      # daemon 状态 + 看板地址
-agentbus serve --detach | stop       # daemon 生命周期（平时无需关心）
+```console
+agentbus setup [--yes] [--agents ...] [--dry-run] [--uninstall]
+agentbus hook                              # hook entrypoint (reads JSON on stdin)
+agentbus register [--name bob]             # join manually
+agentbus who [-v|--json]                   # all live sessions
+agentbus peers [--cwd DIR]                 # sessions in your worktree / repo
+agentbus announce "fixing auth in wt-auth" # publish status
+agentbus send <name|all> "message"         # --kind chat|request|reply|notice|urgent
+agentbus ask <name> "question" [--wait 120] # request-reply, blocks for the answer
+agentbus reply "message" [--to <name>]     # answer the newest peer message
+agentbus notify <name|all> "information"   # one-way notice
+agentbus inbox [--wait 60] [--peek]        # read your mailbox
+agentbus primer                            # print the session contract
+agentbus log [-n 20]                       # recent bus traffic
+agentbus mcp                               # stdio MCP server
+agentbus status | doctor                   # daemon / installation checks
+agentbus serve [--detach] | stop           # daemon lifecycle
 ```
 
-flags 放在位置参数之前（Go flag 约定），例如
-`agentbus send --kind urgent bob "stop touching main"` 而不是把 `--kind` 放在消息后面。
-完整协议（socket op、hook JSON、A2A、MCP）见 [docs/protocol.md](docs/protocol.md)。
+Flags go before positional arguments (Go `flag` convention):
+`agentbus send --kind urgent bob "stop touching main"`.
 
-## Web 看板、A2A 与 MCP
+## Dashboard, MCP, A2A
 
-- 看板：`GET /`（相对路径，code-server 下 `/proxy/8787/` 直接可用）、
-  `GET /api/state`、`POST /api/send`、`POST /api/delete`；按 repo → worktree
-  分组会话，区分 📢 广播与 🎯 单点消息，跟踪 request 的「待回复 / 已回复」
-  状态；未读 pending 可删除（仅未读，已读历史不可改写），底部独立展示收发日志；
-- A2A 子集：Agent Card + `POST /a2a/<name>` 的 JSON-RPC `message/send`；
-- MCP：`agentbus mcp`，暴露 who/announce/send/ask/inbox 五个工具。
+![agentbus dashboard: chat-style feed with per-agent avatars, workspace roster and newest messages at the bottom](docs/assets/dashboard.png)
 
-默认只绑 loopback；`AGENTBUS_WEB_TOKEN` 可加 bearer token，`AGENTBUS_WEB=0`
-关闭。细节见 [docs/protocol.md](docs/protocol.md) 与
-[docs/design.md](docs/design.md) §6–7。
+- **Dashboard** — `http://127.0.0.1:8787/`: a two-pane chat UI. The roster is
+  grouped by repo → worktree with a color/initials avatar per session; clicking
+  a member opens that conversation. The feed is chronological (newest at the
+  bottom, auto-scroll only when you are already there), groups consecutive
+  messages, marks broadcasts and pending requests inline, and offers
+  reply / delete-unread actions on hover. An earlier separate traffic log was
+  removed because it duplicated the same messages. Behind code-server it is
+  available at `/proxy/8787/`.
+- **A2A subset** — `GET /a2a/<name>/.well-known/agent-card.json` and
+  `POST /a2a/<name>` with JSON-RPC `message/send`.
+- **MCP** — `agentbus mcp` exposes `who`, `announce`, `send`, `ask` and `inbox`
+  as tools for hook-less harnesses.
 
-## 环境变量
+All HTTP endpoints bind loopback. Set `AGENTBUS_WEB_TOKEN` for a bearer token,
+`AGENTBUS_WEB=0` to disable HTTP, `AGENTBUS_WEB_PORT` to move the port.
 
-| 变量 | 作用 |
+## Configuration
+
+| Variable | Purpose |
 |---|---|
-| `AGENTBUS_HOME` | 状态目录，默认 `~/.agentbus` |
-| `AGENTBUS_AGENT` | 强制 agent 标签 |
-| `AGENTBUS_NAME` | hook 注册时的期望名字 |
-| `AGENTBUS_SESSION_ID` | 身份覆盖（hook 外手动命令用） |
-| `AGENTBUS_PRIMER` | `0` = 不注入会话契约（省 token） |
-| `AGENTBUS_WAKE` | 唤醒策略：默认 `request`（urgent + 定向 request）；`urgent` = 仅 urgent；`all` = 任意消息 |
-| `AGENTBUS_DSH_POLL_MS` | DSH 插件空闲唤醒轮询间隔（ms，默认 5000，0 关闭） |
-| `AGENTBUS_WEB` | `0` = 关闭看板/A2A |
-| `AGENTBUS_WEB_PORT` | 看板端口，默认 8787 |
-| `AGENTBUS_WEB_TOKEN` | 看板/A2A 的 bearer token（可选） |
+| `AGENTBUS_HOME` | state directory, default `~/.agentbus` |
+| `AGENTBUS_AGENT` | force the agent label |
+| `AGENTBUS_NAME` | preferred name for hook registration |
+| `AGENTBUS_SESSION_ID` | identity override outside hooks |
+| `AGENTBUS_PRIMER` | `0` disables the session contract injection |
+| `AGENTBUS_WAKE` | `request` (default), `urgent` or `all` |
+| `AGENTBUS_DSH_POLL_MS` | DSH idle poll interval (default 5000, `0` disables) |
+| `AGENTBUS_WEB` / `AGENTBUS_WEB_PORT` / `AGENTBUS_WEB_TOKEN` | dashboard/API knobs |
+| `AGENTBUS_BIN` | override the binary used by the npm launcher |
 
-## 文档
+## Documentation
 
-| 文档 | 内容 |
+| Document | Contents |
 |---|---|
-| [docs/README.md](docs/README.md) | 文档索引与阅读路径 |
-| [docs/design.md](docs/design.md) | 设计：目标、token 经济学、架构、投递梯子、边界、可靠性、安全 |
-| [docs/protocol.md](docs/protocol.md) | 协议参考：CLI、hook JSON、socket op、A2A、MCP |
-| [docs/adoption.md](docs/adoption.md) | agent 会不会真的用：会话契约、信任边界、实测记录 |
-| [docs/testing.md](docs/testing.md) | 单元 / e2e / 插件 / 互操作测试 |
-| [docs/research.md](docs/research.md) | 现有方案调研 |
-| [docs/integrations/](docs/integrations/) | 逐 agent 接线说明 |
+| [docs/install.md](docs/install.md) | npm, source, per-agent setup, uninstall, troubleshooting |
+| [docs/design.md](docs/design.md) | goals, token economics, architecture, identity, reliability, security |
+| [docs/protocol.md](docs/protocol.md) | CLI, hook JSON, socket ops, HTTP/A2A, MCP, env vars |
+| [docs/adoption.md](docs/adoption.md) | how a session decides to trust and answer peer messages |
+| [docs/testing.md](docs/testing.md) | unit / e2e / plugin / interop test matrix |
+| [docs/research.md](docs/research.md) | prior art and why this is built |
+| [docs/integrations/](docs/integrations/) | per-harness wiring guides |
+| [docs/zh/](docs/zh/) | 中文文档 |
 
-## 测试
+## Development
 
 ```bash
-go test ./...        # 单元测试（注册/投递/回收/持久化/限速/去重/kind/ask/reply）
-./test/e2e.sh          # 端到端：双会话 hook 全流程 + 投递梯子 + ask/notify/reply
-                       #        + Web API/页面 + A2A + MCP + 重启持久化
-./test/dsh-idle-wake.sh # DSH 原生插件的空闲唤醒（mock agent，不花模型额度）
+go test ./...          # unit tests
+./test/setup.sh        # installer/detection/idempotency in a throwaway HOME
+./test/e2e.sh          # two real hook sessions, web, A2A, MCP, restart
+./scripts/test-npm.sh  # build + pack + global-install the npm packages
 ```
 
-互操作（真实 dsh ↔ claude）见 [docs/testing.md](docs/testing.md) §5。
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR. The protocol is
+documented; new harness integrations are welcome.
+
+## Status
+
+`agentbus` is pre-1.0. Linux is the fully supported platform (PID liveness);
+macOS works with TTL-based liveness; Windows is not supported yet because the
+daemon uses unix sockets. The public surface (CLI, hook JSON, socket ops) is
+documented and changes with a CHANGELOG entry.
+
+If this replaces one "hey, are you editing that file too?" interruption per
+day, it is doing its job.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
