@@ -62,13 +62,13 @@ jobs:
             if npm view "$name@$VERSION" version >/dev/null 2>&1; then
               echo "skip $name@$VERSION (already published)"
             else
-              npm publish "dist/$name-$VERSION.tgz" --access public
+              npm publish "./dist/$name-$VERSION.tgz" --access public
             fi
           done
           if npm view "agentbus-cli@$VERSION" version >/dev/null 2>&1; then
             echo "skip agentbus-cli@$VERSION (already published)"
           else
-            npm publish "dist/agentbus-cli-$VERSION.tgz" --access public
+            npm publish "./dist/agentbus-cli-$VERSION.tgz" --access public
           fi
 
       - name: npm publishing skipped
