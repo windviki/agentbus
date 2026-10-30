@@ -9,3 +9,17 @@ dist/
 node_modules/
 npm/platform/*/bin/
 *.tgz
+
+# local configuration, credentials and state
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+id_rsa
+id_ed25519
+.credentials
+credentials.*
+*.agentbus-bak
+.DS_Store
