@@ -101,21 +101,40 @@ func WakesIdle(msgs []Msg, name string) bool {
 	return false
 }
 
+// Activity states a harness can report. Presence answers "does this session
+// still exist"; state answers "is it doing something right now". A harness
+// tells the bus at turn boundaries: working while a turn runs, idle once it
+// sits at the prompt. Idle is not death — a directed request may still wake
+// it (the DSH plugin steers an idle agent), so idle sessions stay registered
+// and addressable; they are just not shown as parallel work by default.
+const (
+	StateWorking = "working"
+	StateIdle    = "idle"
+)
+
 // Session is one agent session on the bus. ID is a stable client-side key
 // ("sid:<uuid>" from a hook session id, or "pid:<pid>:<start>"); Name is the
 // short human/agent-facing handle messages are addressed to.
 type Session struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Agent     string `json:"agent,omitempty"`
-	Cwd       string `json:"cwd,omitempty"`
-	Repo      string `json:"repo,omitempty"` // git common dir (groups worktrees)
-	Branch    string `json:"branch,omitempty"`
-	Pid       int    `json:"pid,omitempty"`
-	PidStart  string `json:"pid_start,omitempty"`
-	Status    string `json:"status,omitempty"`
-	CreatedAt int64  `json:"created_at"`
-	LastSeen  int64  `json:"last_seen"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Agent    string `json:"agent,omitempty"`
+	Cwd      string `json:"cwd,omitempty"`
+	Repo     string `json:"repo,omitempty"` // git common dir (groups worktrees)
+	Branch   string `json:"branch,omitempty"`
+	Pid      int    `json:"pid,omitempty"`
+	PidStart string `json:"pid_start,omitempty"`
+	Status   string `json:"status,omitempty"`
+	// State is the activity state last asserted by the harness ("working" or
+	// "idle"); StateAt is when it entered that state (unchanged by repeated
+	// assertions of the same state, so it means "since").
+	State   string `json:"state,omitempty"`
+	StateAt int64  `json:"state_at,omitempty"`
+	// Working is derived on read (Who): true while the session is inside a
+	// turn. It is never persisted.
+	Working   bool  `json:"working,omitempty"`
+	CreatedAt int64 `json:"created_at"`
+	LastSeen  int64 `json:"last_seen"`
 }
 
 // Options tunes bus behaviour (injected by tests).
@@ -126,16 +145,26 @@ type Options struct {
 	MsgTTLSeconds  int64
 	TombTTLSeconds int64 // freed names stay reserved this long
 	RatePerMinute  int
+	// BusyTTLSeconds bounds how long a "working" assertion stays credible
+	// without any further hook. A crashed or killed turn must not look like
+	// parallel work forever.
+	BusyTTLSeconds int64
+	// UnknownActiveSeconds is the fallback for clients that report no state
+	// (older binaries, MCP-only harnesses, manual register): recent bus
+	// activity counts as working, older presences count as idle.
+	UnknownActiveSeconds int64
 }
 
 func DefaultOptions() Options {
 	return Options{
-		Now:            time.Now,
-		PidAlive:       procinfo.Alive,
-		TTLSeconds:     6 * 3600,
-		MsgTTLSeconds:  6 * 3600,
-		TombTTLSeconds: 3600,
-		RatePerMinute:  20,
+		Now:                  time.Now,
+		PidAlive:             procinfo.Alive,
+		TTLSeconds:           6 * 3600,
+		MsgTTLSeconds:        6 * 3600,
+		TombTTLSeconds:       3600,
+		RatePerMinute:        20,
+		BusyTTLSeconds:       2 * 3600,
+		UnknownActiveSeconds: 10 * 60,
 	}
 }
 
@@ -187,6 +216,12 @@ func New(o Options) *Bus {
 	}
 	if o.RatePerMinute <= 0 {
 		o.RatePerMinute = 20
+	}
+	if o.BusyTTLSeconds <= 0 {
+		o.BusyTTLSeconds = 2 * 3600
+	}
+	if o.UnknownActiveSeconds <= 0 {
+		o.UnknownActiveSeconds = 10 * 60
 	}
 	return &Bus{
 		opt:    o,
@@ -264,6 +299,47 @@ func (b *Bus) NameOf(id string) (string, bool) {
 		return "", false
 	}
 	return s.Name, true
+}
+
+// SetState records the activity state the session's harness reports. Hooks
+// call it at turn boundaries: "working" when a prompt or tool call starts,
+// "idle" when the turn finishes. Repeating the same state only refreshes
+// presence, so StateAt keeps meaning "when this state began" even when an
+// idle poller re-asserts idle every few seconds.
+func (b *Bus) SetState(id, state string) (*Session, error) {
+	state = strings.ToLower(strings.TrimSpace(state))
+	if state != StateWorking && state != StateIdle {
+		return nil, fmt.Errorf("%w: state must be %q or %q", ErrBadInput, StateWorking, StateIdle)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.reapLocked()
+	s := b.sess[id]
+	if s == nil {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownSession, id)
+	}
+	now := b.now()
+	s.LastSeen = now
+	if s.State != state {
+		s.State, s.StateAt = state, now
+	}
+	return s, nil
+}
+
+// workingLocked derives "is this session inside a turn right now".
+func (b *Bus) workingLocked(s *Session, now int64) bool {
+	switch s.State {
+	case StateWorking:
+		// A stale assertion means the turn was abandoned without a Stop hook
+		// (crash, killed host): do not keep advertising it as parallel work.
+		return now-s.StateAt <= b.opt.BusyTTLSeconds
+	case StateIdle:
+		return false
+	default:
+		// No state was ever reported (older client, MCP-only harness, manual
+		// register): recent bus activity is the only signal available.
+		return now-s.LastSeen <= b.opt.UnknownActiveSeconds
+	}
 }
 
 // Announce publishes/updates the session's status ("doing X in worktree Y").
@@ -438,17 +514,46 @@ func (b *Bus) TakeFrom(id, peer string, wait time.Duration) (Msg, bool, string) 
 	}
 }
 
-// Who returns live sessions sorted by name.
+// Who returns live sessions sorted by name, with the derived Working flag
+// filled in (explicit state, staleness, or the presence fallback).
 func (b *Bus) Who() []Session {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.reapLocked()
+	now := b.now()
 	out := make([]Session, 0, len(b.sess))
 	for _, s := range b.sess {
-		out = append(out, *s)
+		cp := *s
+		cp.Working = b.workingLocked(s, now)
+		out = append(out, cp)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// WorkingOnly keeps the sessions currently inside a turn — the set a new
+// session cares about for conflict avoidance.
+func WorkingOnly(sessions []Session) []Session {
+	out := make([]Session, 0, len(sessions))
+	for _, s := range sessions {
+		if s.Working {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// CountWorking reports how many sessions are working and how many are idle
+// (alive but not inside a turn).
+func CountWorking(sessions []Session) (working, idle int) {
+	for _, s := range sessions {
+		if s.Working {
+			working++
+		} else {
+			idle++
+		}
+	}
+	return working, idle
 }
 
 // Leave removes a session and reserves its name briefly against reuse.
@@ -782,6 +887,7 @@ func (b *Bus) Snapshot() *State {
 	}
 	for _, s := range b.sess {
 		cp := *s
+		cp.Working = false // derived on read, never persisted
 		st.Sessions = append(st.Sessions, &cp)
 	}
 	for n, q := range b.inbox {

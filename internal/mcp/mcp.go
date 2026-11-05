@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/windviki/agentbus/internal/bus"
 	"github.com/windviki/agentbus/internal/client"
 	"github.com/windviki/agentbus/internal/procinfo"
 	"github.com/windviki/agentbus/internal/proto"
@@ -30,9 +31,16 @@ type toolDef struct {
 var tools = []toolDef{
 	{
 		Name: "agentbus_who",
-		Description: "List live AI agent sessions on this machine (name, agent CLI, what they are working on, worktree). " +
-			"Run this before starting non-trivial work to spot overlapping parallel sessions.",
-		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false},
+		Description: "List AI agent sessions that are working right now (name, agent CLI, what they are doing, worktree, how long). " +
+			"Run this before starting non-trivial work to spot overlapping parallel sessions. " +
+			"Finished/idle sessions are hidden by default; pass all=true to list them too (an idle dsh session can be woken with a directed request).",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"all": map[string]any{"type": "boolean", "description": "include idle sessions (alive but not inside a turn)"},
+			},
+			"additionalProperties": false,
+		},
 	},
 	{
 		Name:        "agentbus_announce",
@@ -218,13 +226,30 @@ func callTool(home string, params json.RawMessage) (string, bool) {
 		if !resp.Ok {
 			return resp.Error, true
 		}
+		all, _ := args["all"].(bool)
+		_, idle := bus.CountWorking(resp.Sessions)
 		if len(resp.Sessions) == 0 {
 			return "no other live agent sessions", false
 		}
+		shown := resp.Sessions
+		if !all {
+			shown = bus.WorkingOnly(resp.Sessions)
+		}
 		var b strings.Builder
-		fmt.Fprintf(&b, "%d live agent session(s):\n", len(resp.Sessions))
-		for _, s := range resp.Sessions {
-			fmt.Fprintf(&b, "- %s · %s · %s · %s ago", s.Name, s.Agent, s.Cwd, agoStr(s.LastSeen))
+		if len(shown) == 0 {
+			fmt.Fprintf(&b, "no session is working right now (%d idle, not a conflict)", idle)
+			if !all {
+				b.WriteString("; pass all=true to list them")
+			}
+			return b.String(), false
+		}
+		if all {
+			fmt.Fprintf(&b, "%d session(s) alive:\n", len(shown))
+		} else {
+			fmt.Fprintf(&b, "%d session(s) working right now:\n", len(shown))
+		}
+		for _, s := range shown {
+			fmt.Fprintf(&b, "- %s · %s · %s · %s", s.Name, s.Agent, s.Cwd, activityStr(s))
 			if s.Branch != "" && s.Branch != "HEAD" {
 				fmt.Fprintf(&b, "@%s", s.Branch)
 			}
@@ -232,6 +257,9 @@ func callTool(home string, params json.RawMessage) (string, bool) {
 				fmt.Fprintf(&b, " · \"%s\"", s.Status)
 			}
 			b.WriteByte('\n')
+		}
+		if !all && idle > 0 {
+			fmt.Fprintf(&b, "%d idle session(s) hidden (finished or waiting); pass all=true to list — a directed request wakes an idle dsh session\n", idle)
 		}
 		b.WriteString("message: agentbus_send(to=<name>, body=...) or agentbus_ask(to=<name>, body=...)")
 		return b.String(), false
@@ -338,4 +366,19 @@ func agoStr(ts int64) string {
 	default:
 		return fmt.Sprintf("%dh", int(d.Hours()))
 	}
+}
+
+// activityStr renders "working 4m" / "idle 12h": the derived turn state plus
+// how long it has held. LastSeen is only a heartbeat (idle dsh sessions
+// refresh it every 5s), so StateAt is the right anchor.
+func activityStr(s bus.Session) string {
+	label := "idle"
+	if s.Working {
+		label = "working"
+	}
+	since := s.StateAt
+	if since == 0 {
+		since = s.LastSeen
+	}
+	return label + " " + agoStr(since)
 }

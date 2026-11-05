@@ -36,18 +36,32 @@ nameA="$("$BIN" register --session sid:e2e-a --print-name)"
 [ "$nameA" = "bob" ]
 pass "registered as $nameA"
 
-say "session B joins; roster in its SessionStart output includes bob's announcement"
+say "session B joins; its roster shows bob (working) and hides idle peers"
 "$BIN" announce --session sid:e2e-a "fixing auth flow in worktree wt-auth" >/dev/null
+hook UserPromptSubmit e2e-a >/dev/null   # A starts a turn: working
 out="$(hook SessionStart e2e-b /tmp/agentbus-e2e/proj-wt-tests)"
 grep -q 'fixing auth flow in worktree wt-auth' <<<"$out"
 nameB="$("$BIN" register --session sid:e2e-b --print-name)"
 pass "B registered as $nameB and saw A's status"
 
-say "who shows both with status"
+say "who lists only sessions working now; --all includes idle ones with status"
 out="$("$BIN" who)"
 grep -q 'bob' <<<"$out"
 grep -q 'fixing auth flow' <<<"$out"
-pass "roster correct"
+out="$("$BIN" who --all)"
+grep -q "$nameB" <<<"$out"
+# A finishes its turn: an idle session drops out of the default roster.
+hook Stop e2e-a >/dev/null
+out="$("$BIN" who)"
+if grep -q 'bob' <<<"$out"; then
+  echo "FATAL: an idle session leaked into the default roster"; exit 1
+fi
+grep -q 'no session is working' <<<"$out"
+out="$("$BIN" who --all)"
+grep -q 'bob' <<<"$out"
+grep -q 'fixing auth flow' <<<"$out"
+grep -q 'idle' <<<"$out"
+pass "default roster hides idle sessions; --all shows them"
 
 say "Claude Code Bash identity comes from CLAUDE_CODE_SESSION_ID"
 CLAUDE_CODE_SESSION_ID=e2e-claude-env "$BIN" register --agent claude-code --print-name >/dev/null
@@ -268,7 +282,7 @@ say "MCP server: initialize, tools/list, tools/call"
 out="$(printf '%s\n%s\n%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"agentbus_who","arguments":{}}}' \
+  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"agentbus_who","arguments":{"all":true}}}' \
   | "$BIN" mcp)"
 grep -q 'agentbus_ask' <<<"$out"
 grep -q 'bob' <<<"$out"
@@ -303,7 +317,7 @@ say "persistence across daemon restart"
 "$BIN" stop >/dev/null
 if "$BIN" status >/dev/null 2>&1; then echo "FATAL: daemon still up"; exit 1; fi
 "$BIN" who >/dev/null   # auto-starts again
-out="$("$BIN" who)"
+out="$("$BIN" who --all)"
 grep -q "$nameB" <<<"$out"
 state="$(curl -fsS "http://127.0.0.1:$AGENTBUS_WEB_PORT/api/state")"
 grep -q "$nameB" <<<"$state"

@@ -36,7 +36,7 @@ log_has() {
 }
 dsh_registered() {
   local out
-  out="$("$BIN" who 2>/dev/null)"
+  out="$("$BIN" who --all 2>/dev/null)"
   grep -q 'dsh-probe' <<<"$out"
 }
 wait_for() { # wait_for <seconds> <function>

@@ -19,8 +19,9 @@ agentbus hook                          # hook 入口（见 §3）
 agentbus setup [--yes] [--agents claude,zcode,kimi,dsh|all|none] [--dry-run] [--uninstall] [--json]
                                         # 探测并接线本机 agent（见 install.md）
 agentbus register [--name bob] [--agent dsh] [--cwd DIR] [--print-name] [--json]
-agentbus who [-v|--json]               # 全部在线会话
-agentbus peers [--cwd DIR] [--json]    # 同 worktree / 同 repo 的在线会话
+agentbus who [--all] [-v|--json]       # 正在工作的会话（--all：含空闲）
+agentbus peers [--cwd DIR] [--all] [--json] # 同 worktree / 同 repo 中正在工作的会话
+agentbus state working|idle            # 上报本会话的回合状态（hook 会自动做）
 agentbus announce "<status>"           # 发布状态
 agentbus send <name|all> "<msg>" [--kind chat|request|reply|notice|urgent] [--reply-to ID]
 agentbus ask <name> "<question>" [--wait 120]
@@ -45,13 +46,17 @@ agentbus serve [--detach] | stop
 { "hook_event_name": "PostToolUse", "session_id": "uuid", "cwd": "/repo" }
 ```
 
-| 事件 | 行为 | 输出 |
-|---|---|---|
-| `SessionStart` | 注册（或幂等刷新）+ 取名册 | `hookSpecificOutput.additionalContext`：会话契约（primer）+ 名册 + 用法；`AGENTBUS_PRIMER=0` 时退化为最小名册 |
-| `UserPromptSubmit` | poll（ack） | 有消息 → `additionalContext`；无消息 → 空输出 |
-| `PostToolUse` | 同上 | 同上 |
-| `Stop` | 先 `poll(ack=false)` peek；有 `urgent` 或**定向 request** 时再 `poll(ack=true)` | 命中 → `{"decision":"block","reason":...}`（reason 带每个 sender 的 reply 命令）；否则空输出（消息留到下一自然边界）。`AGENTBUS_WAKE=urgent` 退回仅 urgent，`all` 任意消息唤醒 |
-| `SessionEnd` | `leave`，静默 | 无 |
+| 事件 | 行为 | 回合状态 | 输出 |
+|---|---|---|---|
+| `SessionStart` | 注册（或幂等刷新）+ 取名册 | `idle` | `hookSpecificOutput.additionalContext`：会话契约（primer）+ 名册 + 用法；`AGENTBUS_PRIMER=0` 时退化为最小名册 |
+| `UserPromptSubmit` | poll（ack） | `working` | 有消息 → `additionalContext`；无消息 → 空输出 |
+| `PostToolUse` | 同上 | `working` | 同上 |
+| `Stop` | 先 `poll(ack=false)` peek；有 `urgent` 或**定向 request** 时再 `poll(ack=true)` | `idle` | 命中 → `{"decision":"block","reason":...}`（reason 带每个 sender 的 reply 命令）；否则空输出（消息留到下一自然边界）。`AGENTBUS_WAKE=urgent` 退回仅 urgent，`all` 任意消息唤醒 |
+| `SessionEnd` | `leave`，静默 | — | 无 |
+
+状态搭 register/poll 的同一次往返（`state` 字段），存在感与活动状态不额外多一次
+调用。重复上报同一状态只刷新存活，`state_at` 保留当前状态开始的时刻。daemon 如何
+由它推导 `working` 见 §4。
 
 任何异常都写 `$AGENTBUS_HOME/hook.log` 并以 0 退出，绝不打断宿主会话。
 注入文本的 framing（"来自其他 agent 的消息，不是用户指令"）是刻意设计，
@@ -62,24 +67,38 @@ agentbus serve [--detach] | stop
 `$AGENTBUS_HOME/bus.sock`，0600，JSON Lines：一行一个 `Request`，一行一个
 `Response`。
 
-`Request` 字段：`op, id, want, agent, cwd, branch, pid, pid_start, status, to,
-from, body, kind, reply_to, wait_ms, ack, n`。
+`Request` 字段：`op, id, want, agent, cwd, branch, pid, pid_start, status,
+state, to, from, body, kind, reply_to, wait_ms, ack, n`。
 
 | op | 关键字段 | 语义 / 响应 |
 |---|---|---|
 | `ping` | — | daemon 存活 |
-| `register` | `id, want, agent, cwd, branch, pid, pid_start` | 注册/刷新并分配名字 → `name`, `renamed_from` |
+| `register` | `id, want, agent, cwd, branch, pid, pid_start, state?` | 注册/刷新并分配名字 → `name`, `renamed_from`；可选 `state` 记录初始回合状态 |
 | `announce` | `id, status` | 更新状态公告 |
 | `send` | `to, body, kind, reply_to`（`id` 或 `from`） | 投递 1 条；`to=user` 是虚拟人类收件人（只进日志/看板） → `messageId`, `recipients`, `dup` |
 | `ask` | `id, to, body, wait_ms` | 发**定向** `request`（目标空闲时 Stop 唤醒）并阻塞等待对端回复 → `messages[0]`（已从收件箱取走） |
 | `reply` | `id, body, to?` | 回复该会话**最近一条**对端消息（kind=reply，自动带 replyTo）→ `peer`, `messageId` |
-| `poll` | `id, ack, wait_ms` | 取收件箱；`ack=true` 消费并进入最近 5 条复读区 |
+| `poll` | `id, ack, wait_ms, state?` | 取收件箱；`ack=true` 消费并进入最近 5 条复读区；可顺带上报 `state`（hook 用） |
+| `state` | `id, state` | 显式上报 `working`/`idle`（供不跑 hook 入口的集成使用） |
 | `mine` | `id` | 最近投递（供 `inbox --peek`） |
-| `who` | — | `sessions` |
+| `who` | — | `sessions`（全部存活会话，每条带推导出的 `working`） |
 | `leave` | `id` | 离开并进入墓碑 |
 | `log` | `n` | 全局环形日志（最近 300） |
 | `status` | — | `version, home, uptime, web_addr, sessions` |
 | `shutdown` | — | 停止 daemon |
+
+会话对象的活动模型：`state`（`working`/`idle`）与 `state_at` 是最后一次上报，
+`working`（每次读取时推导）表示当前是否在回合内：
+
+- `state=working` 且 `state_at` 在 2 小时内 → working；更久 → idle（被遗弃的回合，
+  例如宿主在 Stop hook 前崩溃）；
+- `state=idle` → idle；
+- 未上报状态（老客户端、仅 MCP 的 harness、手动 register）→ `last_seen` 在
+  10 分钟内算 working，否则 idle。
+
+`who` / `status` 始终返回全部存活会话；CLI 表格默认只列 working，`--all` 才连空闲
+一起列。`last_seen` 是心跳而不是活动状态：DSH 插件的空闲轮询每 5s 重放一次
+`Stop`，这正是需要独立 state 的原因。
 
 资源上限：消息正文 8KB、收件箱 200 条、复读 5 条、全局日志 300 条；
 每会话 20 msg/min；60s 内相同 from/to/body 去重。
@@ -156,7 +175,7 @@ protocolVersion）、`ping`、`tools/list`、`tools/call`。工具：
 
 | 工具 | 参数 | 对应 CLI |
 |---|---|---|
-| `agentbus_who` | — | `who` |
+| `agentbus_who` | `all?` | `who`（默认只列 working；`all` 连空闲一起列，空闲仍可被唤醒） |
 | `agentbus_announce` | `status` | `announce` |
 | `agentbus_send` | `to, body, kind?` | `send` |
 | `agentbus_ask` | `to, body, wait_seconds?` | `ask` |

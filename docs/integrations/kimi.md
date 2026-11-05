@@ -12,7 +12,10 @@ Claude Code / ZCode hook shape (`hook_event_name`, `session_id`, `cwd`,
 `agentbus hook` detects `client_type: "kimi_code_cli"` and switches to that
 output mode. PostToolUse deliberately does not poll/ack in Kimi mode (it would
 consume a message without showing it); mail is delivered at the next prompt,
-the Stop wake, or an explicit `agentbus inbox`.
+the Stop wake, or an explicit `agentbus inbox`. Activity state follows the same
+boundaries: `UserPromptSubmit` marks the session `working` and `Stop` marks it
+`idle`, so a Kimi session appears in `agentbus who` for the duration of its turn
+and only under `who --all` while it waits at the prompt.
 
 ## Install (automated)
 

@@ -13,8 +13,10 @@ always take precedence over peer agents.
 ## Do this
 
 1. **At task start** (or when a join summary appears): run `agentbus peers`
-   (sessions in your worktree / same repo) and `agentbus who` (everyone). If a
-   session's status overlaps your task or files, message them BEFORE starting.
+   (sessions working in your worktree / same repo) and `agentbus who` (everyone
+   working now). If a session's status overlaps your task or files, message them
+   BEFORE starting. Idle/finished sessions are hidden by default because they
+   are not a conflict; `--all` lists them (they stay addressable and wakeable).
    Ask with `agentbus ask <name> "starting <X> in <path/branch>; conflicts with you?"`
    (or `send --kind request`): a direct request wakes an idle peer and expects a
    one-line answer, while a plain chat may sit until the peer next acts.
@@ -31,6 +33,10 @@ always take precedence over peer agents.
    short reply. `--kind urgent` wakes for real interruptions only (real damage,
    or the human explicitly asked) and also wakes broadcast recipients. Chat,
    notice and broadcast requests wait for the peer's next tool call or turn.
+   "Idle" means the peer finished its turn, not that it is gone: DSH steers an
+   idle agent when a request arrives; hook-only CLIs see it at their next
+   boundary. The bus states are `working` (in a turn) and `idle`, refreshed by
+   the hooks at turn boundaries (no manual bookkeeping).
 
 ## Etiquette
 
@@ -64,8 +70,12 @@ always take precedence over peer agents.
 
 ## Commands
 
-- `agentbus peers` — sessions in your worktree / same repo (conflict-relevant)
-- `agentbus who` — all live sessions: name · agent · status · worktree
+- `agentbus peers` — sessions **working now** in your worktree / same repo
+  (conflict-relevant); `--all` includes idle ones
+- `agentbus who` — sessions working now: name · agent · activity · status ·
+  worktree; `--all` lists idle sessions too
+- `agentbus state working|idle` — report your own turn state (hooks do this
+  automatically; only needed by harnesses without hooks)
 - `agentbus announce "<status>"` — publish what you're doing
 - `agentbus send <name|all> "<message>" [--kind chat|request|reply|notice|urgent]` — message peers
   (`request` = directed question, wakes an idle peer and expects a reply; `urgent` = interrupt)

@@ -49,6 +49,8 @@ func run(args []string) int {
 		return cmdWho(rest)
 	case "peers":
 		return cmdPeers(rest)
+	case "state":
+		return cmdState(rest)
 	case "announce":
 		return cmdAnnounce(rest)
 	case "send":
@@ -94,8 +96,10 @@ Usage:
                                              # stdin, registers/polls/leaves, prints
                                              # hook-output JSON (nothing when idle)
   agentbus register [--name bob] [--agent A] # join manually (name auto-generated if omitted)
-  agentbus who [-v|--json]                   # list live sessions + what they're doing
-  agentbus peers [--cwd DIR] [--json]        # live sessions in YOUR worktree / repo
+  agentbus who [--all] [-v|--json]           # sessions working right now (--all: idle too)
+  agentbus peers [--cwd DIR] [--all] [--json] # working sessions in YOUR worktree / repo
+  agentbus state working|idle                # report this session's turn state (hooks do
+                                             # this automatically at turn boundaries)
   agentbus announce "fixing auth in wt-auth" # publish your status
   agentbus send <name|all> "message"         # message a peer / broadcast
                                              #   --kind chat|request|reply|notice|urgent
@@ -387,14 +391,18 @@ func cmdStatus(args []string) int {
 		printJSON(resp)
 		return 0
 	}
-	fmt.Printf("[agentbus] daemon %s up %s · %d live session(s) · home %s\n",
-		resp.Version, dur(time.Duration(resp.Uptime)*time.Second), len(resp.Sessions), home)
+	working, idle := bus.CountWorking(resp.Sessions)
+	fmt.Printf("[agentbus] daemon %s up %s · %d working · %d idle · home %s\n",
+		resp.Version, dur(time.Duration(resp.Uptime)*time.Second), working, idle, home)
 	if resp.WebAddr != "" {
 		fmt.Printf("[agentbus] web: http://%s/ (code-server: /proxy/%s/)\n",
 			resp.WebAddr, strings.TrimPrefix(resp.WebAddr, "127.0.0.1:"))
 	}
-	for _, s := range resp.Sessions {
+	for _, s := range bus.WorkingOnly(resp.Sessions) {
 		fmt.Printf("  %s\n", rosterLine(s))
+	}
+	if idle > 0 {
+		fmt.Printf("  (+%d idle: agentbus who --all)\n", idle)
 	}
 	return 0
 }
@@ -460,6 +468,9 @@ func cmdHook(args []string) int {
 		resp, err := client.Call(home, true, proto.Request{
 			Op: "register", ID: key, Want: os.Getenv("AGENTBUS_NAME"), Agent: label, Cwd: cwd,
 			Repo: gitRepo(cwd), Branch: gitBranch(cwd), Pid: pid, PidStart: pidStart,
+			// A freshly started session sits at the prompt until its first
+			// prompt arrives; that is idle, not "in progress".
+			State: bus.StateIdle,
 		})
 		if err != nil || !resp.Ok {
 			hookFail(home, err, resp)
@@ -472,7 +483,7 @@ func cmdHook(args []string) int {
 		if kimi {
 			kimiFirstRoster(home, key, h.Cwd)
 		}
-		if msgs := pollForHook(home, key); len(msgs) > 0 {
+		if msgs := pollForHook(home, key, bus.StateWorking); len(msgs) > 0 {
 			if kimi {
 				fmt.Print(incomingText(msgs))
 			} else {
@@ -486,17 +497,19 @@ func cmdHook(args []string) int {
 		if kimi {
 			return 0
 		}
-		if msgs := pollForHook(home, key); len(msgs) > 0 {
+		if msgs := pollForHook(home, key, bus.StateWorking); len(msgs) > 0 {
 			fmt.Print(hookContextJSON(h.EventName, incomingText(msgs)))
 		}
 	case "Stop":
-		// Delivery ladder: an idle session is woken by urgent messages and by
-		// requests addressed directly to it (a question needs an answer).
+		// The turn is ending: report idle first (a Stop from the DSH idle
+		// poller re-asserts it every few seconds), then apply the delivery
+		// ladder. An idle session is woken by urgent messages and by requests
+		// addressed directly to it (a question needs an answer).
 		// AGENTBUS_WAKE=urgent restores the old urgent-only ladder;
 		// AGENTBUS_WAKE=all wakes on anything. Peek first so messages that do
 		// not qualify stay queued for the next natural boundary.
 		peek := false
-		resp, err := client.Call(home, true, proto.Request{Op: "poll", ID: key, Ack: &peek})
+		resp, err := client.Call(home, true, proto.Request{Op: "poll", ID: key, Ack: &peek, State: bus.StateIdle})
 		if err != nil || !resp.Ok || len(resp.Messages) == 0 {
 			return 0
 		}
@@ -550,10 +563,10 @@ func shouldWakeIdle(msgs []bus.Msg, name string) bool {
 	}
 }
 
-// pollForHook polls once; if the daemon forgot us (state wiped), it silently
-// re-registers and retries.
-func pollForHook(home, key string) []bus.Msg {
-	resp, err := client.Call(home, true, proto.Request{Op: "poll", ID: key})
+// pollForHook polls once and reports the turn state in the same round-trip;
+// if the daemon forgot us (state wiped), it silently re-registers and retries.
+func pollForHook(home, key, state string) []bus.Msg {
+	resp, err := client.Call(home, true, proto.Request{Op: "poll", ID: key, State: state})
 	if err != nil {
 		hookFail(home, err, resp)
 		return nil
@@ -563,7 +576,7 @@ func pollForHook(home, key string) []bus.Msg {
 	}
 	if strings.Contains(resp.Error, "unknown session") {
 		pid, pidStart, label := detectAgent()
-		if reg, err2 := client.Call(home, true, proto.Request{Op: "register", ID: key, Agent: label, Pid: pid, PidStart: pidStart}); err2 == nil && reg.Ok {
+		if reg, err2 := client.Call(home, true, proto.Request{Op: "register", ID: key, Agent: label, Pid: pid, PidStart: pidStart, State: state}); err2 == nil && reg.Ok {
 			if resp, err = client.Call(home, true, proto.Request{Op: "poll", ID: key}); err == nil && resp.Ok {
 				return resp.Messages
 			}
@@ -648,6 +661,7 @@ func cmdWho(args []string) int {
 	verbose := fs.Bool("v", false, "")
 	verbose2 := fs.Bool("verbose", false, "")
 	asJSON := fs.Bool("json", false, "")
+	all := fs.Bool("all", false, "include idle sessions (alive but not inside a turn)")
 	if err := fs.Parse(args); err != nil {
 		return fail("bad flags: %v", err)
 	}
@@ -658,20 +672,55 @@ func cmdWho(args []string) int {
 	if !resp.Ok {
 		return fail("%s", resp.Error)
 	}
+	// --json stays the machine view of the whole bus; the per-session working
+	// flag lets a caller filter. The human/agent table defaults to work in
+	// progress, because a finished session is not a conflict.
 	if *asJSON {
 		printJSON(resp)
 		return 0
 	}
-	printRoster(resp.Sessions, *verbose || *verbose2)
+	if len(resp.Sessions) == 0 {
+		fmt.Println("[agentbus] no live agent sessions (just you)")
+		return 0
+	}
+	working, idle := bus.CountWorking(resp.Sessions)
+	sessions := resp.Sessions
+	if !*all {
+		sessions = bus.WorkingOnly(sessions)
+	} else {
+		// Full view: work in progress first, then idle sessions.
+		ordered := bus.WorkingOnly(resp.Sessions)
+		for _, s := range resp.Sessions {
+			if !s.Working {
+				ordered = append(ordered, s)
+			}
+		}
+		sessions = ordered
+	}
+	if len(sessions) > 0 {
+		printRoster(sessions, *verbose || *verbose2)
+	}
+	switch {
+	case *all:
+		if idle > 0 {
+			fmt.Println("[agentbus] idle sessions are not working now; a directed request wakes a dsh idle session")
+		}
+	case working == 0:
+		fmt.Printf("[agentbus] no session is working right now (%d idle, not a conflict) — agentbus who --all to list\n", idle)
+	case idle > 0:
+		fmt.Printf("[agentbus] %d idle session(s) hidden (finished or waiting) — agentbus who --all\n", idle)
+	}
 	return 0
 }
 
 // cmdPeers shows only the sessions that matter for conflict avoidance: the
 // same worktree, then other worktrees of the same repo, then everyone else.
+// By default it lists only sessions currently working; --all adds idle ones.
 func cmdPeers(args []string) int {
 	fs := newFlagSet("peers")
 	cwdF := fs.String("cwd", "", "workspace directory (default: $PWD)")
 	asJSON := fs.Bool("json", false, "")
+	all := fs.Bool("all", false, "include idle sessions (alive but not inside a turn)")
 	if err := fs.Parse(args); err != nil {
 		return fail("bad flags: %v", err)
 	}
@@ -701,12 +750,22 @@ func cmdPeers(args []string) int {
 	}
 	repo := gitRepo(cwd)
 	same, sameRepo, other := classifyPeers(cwd, repo, sessions)
+	// The machine view keeps every peer, with the working flag on each
+	// session; callers can filter by it. The human table below defaults to
+	// working sessions.
 	if *asJSON {
 		printJSON(map[string]any{
 			"cwd": cwd, "repo": repo,
 			"same_worktree": same, "same_repo": sameRepo, "other": other,
 		})
 		return 0
+	}
+	hidden := 0
+	if !*all {
+		hidden = len(same) - len(bus.WorkingOnly(same))
+		same = bus.WorkingOnly(same)
+		sameRepo = bus.WorkingOnly(sameRepo)
+		other = bus.WorkingOnly(other)
 	}
 	fmt.Printf("[agentbus] workspace %s%s\n", tilde(cwd), func() string {
 		if repo != "" {
@@ -715,7 +774,11 @@ func cmdPeers(args []string) int {
 		return ""
 	}())
 	if len(same) == 0 && len(sameRepo) == 0 {
-		fmt.Println("[agentbus] no parallel session in this workspace")
+		if hidden > 0 {
+			fmt.Printf("[agentbus] no parallel session working in this workspace (%d idle) — agentbus peers --all\n", hidden)
+		} else {
+			fmt.Println("[agentbus] no parallel session working in this workspace")
+		}
 	} else {
 		if len(same) > 0 {
 			fmt.Printf("SAME WORKTREE (%d) — coordinate before editing shared files\n", len(same))
@@ -727,9 +790,40 @@ func cmdPeers(args []string) int {
 		}
 	}
 	if len(other) > 0 {
-		fmt.Printf("OTHER LIVE SESSIONS (%d)\n", len(other))
+		fmt.Printf("OTHER WORKING SESSIONS (%d)\n", len(other))
 		printRoster(other, false)
 	}
+	if hidden > 0 {
+		fmt.Printf("[agentbus] %d idle session(s) in this workspace hidden (finished or waiting) — agentbus peers --all\n", hidden)
+	}
+	return 0
+}
+
+// cmdState reports the calling session's turn state for integrations that do
+// not run the hook entrypoint. Hooks do this automatically, so agents rarely
+// need it.
+func cmdState(args []string) int {
+	fs := newFlagSet("state")
+	session := fs.String("session", "", "session key override")
+	if err := fs.Parse(args); err != nil {
+		return fail("bad flags: %v", err)
+	}
+	if fs.NArg() < 1 {
+		return fail("usage: agentbus state working|idle")
+	}
+	key := sessionKey(*session)
+	if key == "" {
+		return fail("no agent session detected; run inside an agent session or pass --session <key>")
+	}
+	state := strings.ToLower(strings.TrimSpace(fs.Arg(0)))
+	resp, err := client.Call(busHome(), true, proto.Request{Op: "state", ID: key, State: state})
+	if err != nil {
+		return fail("%v", err)
+	}
+	if !resp.Ok {
+		return fail("%s", resp.Error)
+	}
+	fmt.Printf("[agentbus] '%s' is now %s\n", resp.Name, state)
 	return 0
 }
 

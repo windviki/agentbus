@@ -577,3 +577,161 @@ func TestLastPeerSeesPeekedAndPersistedHistory(t *testing.T) {
 		t.Fatalf("other recipient leaked into reply target: %+v", msg)
 	}
 }
+
+func TestActivityStateWorkingVsIdle(t *testing.T) {
+	b, c := newTestBus()
+	if _, _, err := b.Register("sid:a", "alice", "dsh", "/w", "", 1, "start"); err != nil {
+		t.Fatal(err)
+	}
+	who := func() Session {
+		t.Helper()
+		ss := b.Who()
+		if len(ss) != 1 {
+			t.Fatalf("want 1 session, got %d", len(ss))
+		}
+		return ss[0]
+	}
+	// No state reported yet: fresh presence is the fallback signal.
+	if !who().Working {
+		t.Fatal("a just-registered session without state should count as working")
+	}
+	// Prompt / tool hook: working.
+	if _, err := b.SetState("sid:a", StateWorking); err != nil {
+		t.Fatal(err)
+	}
+	s := who()
+	if !s.Working || s.State != StateWorking {
+		t.Fatalf("want working, got %+v", s)
+	}
+	workStart := s.StateAt
+	// Re-asserting the same state refreshes presence, not "since".
+	c.advance(2 * time.Minute)
+	if _, err := b.SetState("sid:a", StateWorking); err != nil {
+		t.Fatal(err)
+	}
+	if got := who().StateAt; got != workStart {
+		t.Fatalf("state_at moved on a repeated working assertion: %d != %d", got, workStart)
+	}
+	// A tool hook keeps a long turn credible.
+	c.advance(30 * time.Minute)
+	if _, err := b.SetState("sid:a", StateWorking); err != nil {
+		t.Fatal(err)
+	}
+	if !who().Working {
+		t.Fatal("a fresh working assertion must still be working")
+	}
+	// Stop hook: idle, anchored at the transition.
+	c.advance(time.Minute)
+	if _, err := b.SetState("sid:a", StateIdle); err != nil {
+		t.Fatal(err)
+	}
+	s = who()
+	if s.Working || s.State != StateIdle {
+		t.Fatalf("want idle, got %+v", s)
+	}
+	idleAt := s.StateAt
+	// The DSH idle poller re-asserts idle every 5s: "idle since" must not move.
+	c.advance(5 * time.Second)
+	b.SetState("sid:a", StateIdle)
+	c.advance(5 * time.Second)
+	b.SetState("sid:a", StateIdle)
+	if got := who().StateAt; got != idleAt {
+		t.Fatalf("idle poller moved state_at: %d != %d", got, idleAt)
+	}
+	if who().Working {
+		t.Fatal("an idle session must not be shown as working")
+	}
+	// A new prompt starts a new turn.
+	if _, err := b.SetState("sid:a", StateWorking); err != nil {
+		t.Fatal(err)
+	}
+	if !who().Working {
+		t.Fatal("new prompt must mark the session working again")
+	}
+}
+
+func TestStaleWorkingAssertionBecomesIdle(t *testing.T) {
+	b, c := newTestBus()
+	b.Register("sid:a", "alice", "dsh", "/w", "", 1, "start")
+	b.SetState("sid:a", StateWorking)
+	c.advance(3 * time.Hour) // > BusyTTLSeconds (2h): abandoned/hung turn
+	s := b.Who()[0]
+	if s.Working {
+		t.Fatal("a 3h-old working assertion must not look like parallel work")
+	}
+	if s.State != StateWorking {
+		t.Fatalf("the raw assertion should be kept for diagnostics, got %q", s.State)
+	}
+}
+
+func TestUnknownStateFallsBackToPresence(t *testing.T) {
+	b, c := newTestBus()
+	// A client that reports no state (manual register, older binary).
+	b.Register("sid:a", "alice", "manual", "/w", "", 1, "start")
+	if !b.Who()[0].Working {
+		t.Fatal("recent presence without state should count as working")
+	}
+	c.advance(11 * time.Minute) // > UnknownActiveSeconds (10m)
+	if b.Who()[0].Working {
+		t.Fatal("an old presence without state should count as idle")
+	}
+	c.advance(30 * time.Second)
+	if _, _, err := b.Poll("sid:a", false, 0); err != nil { // any op refreshes presence
+		t.Fatal(err)
+	}
+	if !b.Who()[0].Working {
+		t.Fatal("a fresh bus call should count as working again")
+	}
+}
+
+func TestSetStateValidation(t *testing.T) {
+	b, _ := newTestBus()
+	b.Register("sid:a", "alice", "", "", "", 1, "start")
+	if _, err := b.SetState("sid:a", "busy"); !errors.Is(err, ErrBadInput) {
+		t.Fatalf("want ErrBadInput, got %v", err)
+	}
+	if _, err := b.SetState("sid:nope", StateIdle); !errors.Is(err, ErrUnknownSession) {
+		t.Fatalf("want ErrUnknownSession, got %v", err)
+	}
+}
+
+func TestWorkingOnlyAndSnapshotDoNotPersistDerivedState(t *testing.T) {
+	b, c := newTestBus()
+	b.Register("sid:a", "alice", "", "", "", 1, "s")
+	b.Register("sid:b", "bob", "", "", "", 1, "s")
+	if _, err := b.SetState("sid:a", StateWorking); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.SetState("sid:b", StateIdle); err != nil {
+		t.Fatal(err)
+	}
+	all := b.Who()
+	if working, idle := CountWorking(all); working != 1 || idle != 1 {
+		t.Fatalf("counts: %d working %d idle", working, idle)
+	}
+	got := WorkingOnly(all)
+	if len(got) != 1 || got[0].Name != "alice" {
+		t.Fatalf("working-only: %+v", got)
+	}
+	st := b.Snapshot()
+	for _, s := range st.Sessions {
+		if s.Working {
+			t.Fatalf("derived working flag must not be persisted: %+v", s)
+		}
+	}
+	b2 := New(Options{Now: c.Now, PidAlive: c.alive, TTLSeconds: 3600,
+		MsgTTLSeconds: 3600, TombTTLSeconds: 600, RatePerMinute: 5})
+	b2.Restore(st)
+	restored := b2.Who()
+	if working, idle := CountWorking(restored); working != 1 || idle != 1 {
+		t.Fatalf("restored counts: %d working %d idle", working, idle)
+	}
+	for _, s := range restored {
+		if s.Name == "alice" && !s.Working {
+			t.Fatal("alice should be working after restore")
+		}
+		if s.Name == "bob" && s.Working {
+			t.Fatal("bob should be idle after restore")
+		}
+	}
+}

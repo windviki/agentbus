@@ -136,7 +136,8 @@ Install: `agentbus setup --agents zcode` (a source checkout can use
 `server-3.16/glm/zcode.cjs`):
 
 - the SessionStart hook registered successfully; the `zcode` session appeared
-  in `agentbus who`;
+  in `agentbus who --all` (it was idle at the prompt; `who` now lists only
+  sessions working in a turn);
 - while the session was running, a peer sent a `request`; after the hook
   injected it, the model ran `agentbus reply`, and the bus log showed
   `zprobe3→zpeer: z-ack-9` (with replyTo);

@@ -18,14 +18,17 @@ type Request struct {
 	Pid      int    `json:"pid,omitempty"`
 	PidStart string `json:"pid_start,omitempty"`
 	Status   string `json:"status,omitempty"`
-	To       string `json:"to,omitempty"`
-	From     string `json:"from,omitempty"`
-	Body     string `json:"body,omitempty"`
-	Kind     string `json:"kind,omitempty"`
-	ReplyTo  string `json:"reply_to,omitempty"`
-	WaitMs   int    `json:"wait_ms,omitempty"`
-	Ack      *bool  `json:"ack,omitempty"`
-	N        int    `json:"n,omitempty"`
+	// State is the activity state a hook reports with a register, poll or
+	// state op: "working" inside a turn, "idle" once at the prompt.
+	State   string `json:"state,omitempty"`
+	To      string `json:"to,omitempty"`
+	From    string `json:"from,omitempty"`
+	Body    string `json:"body,omitempty"`
+	Kind    string `json:"kind,omitempty"`
+	ReplyTo string `json:"reply_to,omitempty"`
+	WaitMs  int    `json:"wait_ms,omitempty"`
+	Ack     *bool  `json:"ack,omitempty"`
+	N       int    `json:"n,omitempty"`
 }
 
 // Response is the daemon's answer. Ok=false means Error carries the reason.

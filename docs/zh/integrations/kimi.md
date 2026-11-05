@@ -10,7 +10,9 @@ Kimi Code 支持生命周期 hook，其 stdin payload 与 Claude Code / ZCode �
 
 `agentbus hook` 会识别 `client_type: "kimi_code_cli"` 并切换到这种输出模式。
 在 Kimi 模式下，PostToolUse 刻意不 poll/ack（否则会消费消息却不展示它）；
-消息会在下一个 prompt、Stop 唤醒或显式 `agentbus inbox` 时投递。
+消息会在下一个 prompt、Stop 唤醒或显式 `agentbus inbox` 时投递。活动状态沿用同样的
+边界：`UserPromptSubmit` 标为 `working`，`Stop` 标为 `idle`，因此 Kimi 会话在回合
+进行中会出现在 `agentbus who`，停在提示符时只在 `who --all` 里出现。
 
 ## 安装（自动化）
 

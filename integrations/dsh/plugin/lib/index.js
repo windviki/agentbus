@@ -350,12 +350,17 @@ export function apply(ctx) {
 
     register(defineTool({
       name: 'agentbus_who',
-      description: 'List live AI agent sessions on this machine: unique name, agent CLI, current status, worktree. ' +
-        'Run this before starting non-trivial work to spot overlapping parallel sessions.',
-      parameters: {},
+      description: 'List AI agent sessions working right now: unique name, agent CLI, activity, status, worktree. ' +
+        'Run this before starting non-trivial work to spot overlapping parallel sessions. ' +
+        'Idle/finished sessions are hidden by default; pass all=true to include them (an idle dsh session can be woken by a directed request).',
+      parameters: {
+        all: { type: 'boolean', description: 'include idle sessions (alive but not inside a turn)' },
+      },
       output: outputText,
       timeoutMs: 15000,
-      execute: async (_args, exec) => cliResultText(await runCli(['who'], toolAgent(exec), { timeoutMs: 10000 })),
+      execute: async (args, exec) => cliResultText(await runCli(
+        args?.all ? ['who', '--all'] : ['who'], toolAgent(exec), { timeoutMs: 10000 },
+      )),
     }))
 
     register(defineTool({

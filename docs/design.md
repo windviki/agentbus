@@ -121,6 +121,26 @@ noted in the injected text. Names are normalized to `[a-z0-9-]{1,32}`.
 **Exit**: Claude Code's `SessionEnd` hook actively calls `leave`; ZCode has no
 such event and relies on PID reaping as the fallback (immediate in testing).
 
+**activity (working vs idle)** — liveness answers "does this session still
+exist", not "is it doing anything". Harnesses multiplex many sessions into one
+long-lived process (the DSH host, the Kimi daemon), so PID liveness is
+permanent for every session that process ever created, and the DSH idle poller
+even refreshes `last_seen` every 5s. Without a second signal the roster fills up
+with finished turns, and a new session cannot tell a peer it might collide with
+from one that went to the prompt 48 hours ago.
+
+The hooks therefore report a separate state at turn boundaries — `working`
+(SessionStart is not; UserPromptSubmit / PostToolUse are) and `idle` (Stop).
+Repeated assertions of the same state only refresh presence; `state_at` stays
+at the moment that state began, so "idle since the Stop hook fired" survives
+the 5s idle poller. The daemon derives the `working` flag on every read:
+`working` assertions are trusted for at most 2h (an abandoned turn, e.g. a
+crashed host, must not look like parallel work forever), `idle` is idle, and a
+client that reports no state falls back to "seen in the last 10 minutes". The
+default roster (`who`, `peers`, the SessionStart summary) shows only working
+sessions; `--all` reveals the idle ones, which remain registered, addressable
+and wakeable by a directed request.
+
 ## 5. Message model and delivery ladder
 
 A message is `{messageId, from, to, kind, body, ts, replyTo, recipients}`. Field
@@ -189,11 +209,12 @@ Workspace discovery: the SessionStart roster is not one big global list but is
 presented in three groups — **the same worktree** (the same directory or a
 subdirectory of the same git worktree), **other worktrees of the same repo**
 (identical `git rev-parse --git-common-dir`), and **others**; `agentbus peers`
-can query these three groups at any time. This way a new session sees from the
-start "who is changing the same files as I am", instead of guessing from a pile
-of unrelated sessions. Kimi's SessionStart stdout is not injected, so its first
-UserPromptSubmit injects the same workspace roster once (injected only once per
-session).
+can query these three groups at any time. The roster is also filtered to
+sessions currently **working** (see the activity model above) and counts idle
+ones in one line, so a new session sees from the start "who is changing the
+same files as I am" instead of a pile of sessions that finished hours ago.
+Kimi's SessionStart stdout is not injected, so its first UserPromptSubmit
+injects the same workspace roster once (injected only once per session).
 
 `AGENTBUS_WAKE=urgent` falls back to the old urgent-only behaviour;
 `AGENTBUS_WAKE=all` lets any message wake. A poll is an ack (a message is

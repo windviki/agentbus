@@ -138,6 +138,8 @@
     border-radius: 999px; padding: 0 5px; line-height: 1.5; white-space: nowrap;
   }
   .seen { margin-left: auto; color: var(--dim2); font-size: 10px; white-space: nowrap; }
+  .seen.working { color: var(--ok); }
+  .seen.idle { color: var(--dim2); opacity: .8; }
   .member-status {
     color: var(--fg); font-size: 12px; line-height: 1.45; margin-top: 2px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -582,6 +584,7 @@ function analyze() {
     g.pending = g.sessions.reduce((n, s) => n + (pendingBySession.get(s.name) || 0), 0);
     g.sessions.sort((a, b) =>
       (pendingBySession.get(b.name) || 0) - (pendingBySession.get(a.name) || 0) ||
+      (b.working ? 1 : 0) - (a.working ? 1 : 0) ||
       (b.last_seen || 0) - (a.last_seen || 0) || a.name.localeCompare(b.name));
   }
   groups.sort((a, b) => (b.pending || 0) - (a.pending || 0) || a.label.localeCompare(b.label) || a.path.localeCompare(b.path));
@@ -632,7 +635,11 @@ function renderSidebar() {
   const el = $("roster");
   const prevScroll = el.scrollTop;
   const pendingTotal = pendingDirect.length + pendingHuman.length;
-  $("rosterCount").textContent = state.sessions.length ? `${state.sessions.length} 在线` : "暂无在线";
+  const total = state.sessions.length;
+  const working = state.sessions.filter((s) => s.working).length;
+  $("rosterCount").textContent = total
+    ? (working ? `${working} 进行中 · ${total} 在线` : `${total} 空闲`)
+    : "暂无在线";
   const allLast = state.messages.length ? state.messages[state.messages.length - 1] : null;
   let html = `
     <button class="conv ${view === "all" ? "active" : ""}" data-open="all" type="button">
@@ -666,6 +673,9 @@ function renderSidebar() {
 
 function memberRow(s, showBranch) {
   const pending = pendingBySession.get(s.name) || 0;
+  const working = !!s.working;
+  const since = s.state_at || s.last_seen || 0;
+  const activity = (working ? "进行中 " : "空闲 ") + ago(since, state.now);
   const status = s.status
     ? `<div class="member-status" title="${escA(s.status)}">${esc(s.status)}</div>`
     : `<div class="member-status empty">（无状态公告）</div>`;
@@ -675,7 +685,7 @@ function memberRow(s, showBranch) {
     <button class="member ${view === s.name ? "active" : ""}${pending ? " pending" : ""}" data-open="${escA(s.name)}" type="button" title="${escA((s.cwd || "") + (s.branch ? " · " + s.branch : ""))}">
       ${avatar(s.name)}
       <span class="member-body">
-        <span class="member-top"><b>${esc(s.name)}</b><span class="agent-pill">${esc(s.agent || "?")}</span><span class="seen">${esc(ago(s.last_seen, state.now))}</span></span>
+        <span class="member-top"><b>${esc(s.name)}</b><span class="agent-pill">${esc(s.agent || "?")}</span><span class="seen ${working ? "working" : "idle"}" title="${working ? "正在执行任务（可冲突）" : "已完成当前轮次，空闲（可被定向 request 唤醒）"}">${working ? "● " : ""}${esc(activity)}</span></span>
         ${status}
         <span class="member-sub">${bits.join(" · ")}</span>
       </span>
@@ -699,6 +709,7 @@ function renderThreadHead() {
     $("threadTitle").textContent = member ? member.name : view;
     const bits = [];
     if (member) bits.push(member.agent || "agent");
+    if (member) bits.push((member.working ? "进行中 " : "空闲 ") + ago(member.state_at || member.last_seen || 0, state.now));
     if (member && member.status) bits.push(member.status);
     if (member) bits.push(shortPath(member.cwd || ""));
     $("threadSub").textContent = bits.filter(Boolean).join(" · ");

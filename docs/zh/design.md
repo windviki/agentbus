@@ -99,6 +99,20 @@ agent 会话里最贵的资源是上下文窗口。四种集成方式的空闲�
 **退出**：Claude Code 的 `SessionEnd` hook 主动 `leave`；ZCode 无此事件，
 靠 PID 回收兜底（实测即时）。
 
+**activity（working / idle）** —— liveness 只回答"会话还在不在"，不回答"它现在
+在不在干活"。harness 会把很多会话复用到同一个长命进程里（DSH host、Kimi daemon），
+于是那个进程创建过的每个会话都永远"活着"，DSH 的空闲轮询甚至每 5s 刷新一次
+`last_seen`。没有第二个信号，名册就会被已完成回合塞满，新会话根本分不清"可能和我
+抢文件的同事"和"48 小时前就回到提示符的空闲会话"。
+
+所以 hook 在回合边界额外上报状态：`working`（UserPromptSubmit / PostToolUse）与
+`idle`（Stop；SessionStart 注册时是 idle）。重复上报同一状态只刷新存活时间，
+`state_at` 保留该状态开始的时刻，因此"Stop 之后空闲了多久"不会被 5s 轮询抹掉。
+daemon 在每次读取时推导 `working`：`working` 最多可信 2 小时（宿主机崩溃等被遗弃的
+回合不能永远像"正在干活"），`idle` 即空闲，未上报状态的老客户端按"最近 10 分钟
+出现过"兜底。默认名册（`who`、`peers`、SessionStart 摘要）只列 working 会话；
+`--all` 才显示空闲会话——它们仍然注册着、可寻址，也仍可被定向 request 唤醒。
+
 ## 5. 消息模型与投递梯子
 
 消息是 `{messageId, from, to, kind, body, ts, replyTo, recipients}`。字段名向 A2A
@@ -151,9 +165,10 @@ request 风暴；它按自然边界送达，收到者按相关性决定是否回
 工作区发现：SessionStart 名册不是一股脑的全局列表，而是按**同一 worktree**
 （相同目录或同一 git worktree 内的子目录）、**同一 repo 的其他 worktree**
 （`git rev-parse --git-common-dir` 相同）、**其他**三组呈现；`agentbus peers`
-可以随时查询这三组。这样新会话开局就能看到"谁和我改了同一批文件"，而不是从
-一堆无关会话里猜。Kimi 的 SessionStart stdout 不会被注入，因此它的首个
-UserPromptSubmit 会补一次同样的 workspace 名册（每会话只注入一次）。
+可以随时查询这三组。名册同时只列当前 **working** 的会话（见上面的 activity
+模型），空闲的只用一行计数带过；这样新会话开局看到的是"谁正在和我改同一批文件"，
+而不是几小时前就已完成的会话堆。Kimi 的 SessionStart stdout 不会被注入，因此它的
+首个 UserPromptSubmit 会补一次同样的 workspace 名册（每会话只注入一次）。
 
 `AGENTBUS_WAKE=urgent` 退回仅 urgent 的旧行为，`AGENTBUS_WAKE=all` 让任意消息
 都可唤醒。poll 即 ack（消息只投一次），ack 后保留最近 5 条供 `inbox --peek` 复读。

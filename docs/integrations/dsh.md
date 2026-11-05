@@ -14,8 +14,13 @@ because the daemon is outside any one harness.
 | `agent/created` | `agentbus hook` SessionStart | registers the session; injects session contract + **workspace-grouped roster** (same worktree / same repo) as a user message (`agent.inject`) |
 | `agent/pre-step` | UserPromptSubmit | delivers queued messages at the next step boundary |
 | `tools/post-execute` | PostToolUse | delivers messages in the same step, right after a tool call |
-| `agent/turn-stopping` | Stop | if an **urgent** message or a request addressed directly to this session is pending, `agent.steer`s the session so the turn continues; chat/notice/broadcast requests stay queued |
+| `agent/turn-stopping` | Stop | if an **urgent** message or a request addressed directly to this session is pending, `agent.steer`s the session so the turn continues; chat/notice/broadcast requests stay queued. Also marks the session `idle` on the bus |
 | `agent/disposed` | `leave` | removes the session from the bus |
+
+Both Stop paths — the real turn end and the 5s idle poller below — report
+`idle`, and `agent/pre-step` reports `working`. That is what lets `agentbus who`
+list a DSH session only while it is actually working while `agentbus who --all`
+still shows it as an idle, wakeable session.
 
 Native tools registered: `agentbus_who`, `agentbus_announce`, `agentbus_send`,
 `agentbus_ask`, `agentbus_reply`, `agentbus_inbox`, `agentbus_primer`.

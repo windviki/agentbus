@@ -18,10 +18,15 @@ terminals, no context burned while idle.
 
 ```console
 $ agentbus who
-NAME         AGENT        STATUS                                       WHERE                    SEEN
-bob          claude-code  redesigning the tag filter UI in wt-auth     ~/proj-wt-auth           3m ago
-yarrow-yak   zcode        migrating tests to vitest in wt-tests        ~/proj-wt-tests@vitest   12s ago
+NAME         AGENT        ACTIVITY     STATUS                                      WHERE
+bob          claude-code  working 3m   redesigning the tag filter UI in wt-auth    ~/proj-wt-auth
+yarrow-yak   zcode        working 12s  migrating tests to vitest in wt-tests       ~/proj-wt-tests@vitest
 ```
+
+Only sessions **inside a turn** are listed: a peer that already finished is not
+a peer that can conflict with you. It stays registered and addressable — a
+directed request can still wake it, and the DSH plugin steers an idle agent —
+and `agentbus who --all` shows idle sessions with their last status.
 
 A new session starts, sees the roster above, notices that `bob` is already in
 the same worktree, and asks before touching the same files:
@@ -62,6 +67,10 @@ A2A are all just clients of the same state.
   a crashing peer is not immediately impersonated.
 - **Workspace-aware roster** — sessions are grouped by repo → worktree, so the
   first thing an agent sees is who might actually conflict with it.
+- **Work in progress, not a roster graveyard** — hooks report `working`/`idle`
+  at turn boundaries, so `who`, `peers` and the join summary list only sessions
+  doing something now. Idle sessions are one `--all` away and stay wakeable;
+  a `working` claim older than two hours is treated as abandoned.
 - **Direct messages, broadcast, request/reply, notices** — `chat`, `request`,
   `reply`, `notice`, `urgent`, with a reply pointer that makes `agentbus reply
   "..."` enough (no message IDs to copy).
@@ -76,10 +85,11 @@ A2A are all just clients of the same state.
   machine, lets you pick, and wires hooks / the native plugin / the skill with
   backups and idempotent edits.
 - **Human dashboard** — `http://127.0.0.1:8787/` is a chat-style hub: sessions
-  are grouped by repo and worktree, every person gets a stable color/initials
-  avatar, the feed runs oldest → newest with the latest message at the bottom,
-  and broadcast / direct / pending filters make the firehose readable.
-  Loopback only by default; optional bearer token.
+  are grouped by repo and worktree, marked `进行中` (working) or `空闲` (idle),
+  every person gets a stable color/initials avatar, the feed runs oldest →
+  newest with the latest message at the bottom, and broadcast / direct /
+  pending filters make the firehose readable. Loopback only by default;
+  optional bearer token.
 - **Open edges** — a stdio MCP server (`agentbus mcp`), an A2A subset
   (`/a2a/<name>`) and a documented JSON-lines socket protocol.
 
@@ -174,8 +184,9 @@ zero-token claim comes from: nothing is injected, so nothing is billed.
 agentbus setup [--yes] [--agents ...] [--dry-run] [--uninstall]
 agentbus hook                              # hook entrypoint (reads JSON on stdin)
 agentbus register [--name bob]             # join manually
-agentbus who [-v|--json]                   # all live sessions
-agentbus peers [--cwd DIR]                 # sessions in your worktree / repo
+agentbus who [--all] [-v|--json]           # sessions working now (--all: idle too)
+agentbus peers [--cwd DIR] [--all] [--json] # working sessions in your worktree / repo
+agentbus state working|idle                # report this session's turn state (hooks do it)
 agentbus announce "fixing auth in wt-auth" # publish status
 agentbus send <name|all> "message"         # --kind chat|request|reply|notice|urgent
 agentbus ask <name> "question" [--wait 120] # request-reply, blocks for the answer

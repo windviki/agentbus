@@ -20,8 +20,9 @@ agentbus hook                          # hook entry point (see §3)
 agentbus setup [--yes] [--agents claude,zcode,kimi,dsh|all|none] [--dry-run] [--uninstall] [--json]
                                         # detect and wire local agents (see install.md)
 agentbus register [--name bob] [--agent dsh] [--cwd DIR] [--print-name] [--json]
-agentbus who [-v|--json]               # all online sessions
-agentbus peers [--cwd DIR] [--json]    # online sessions in the same worktree / same repo
+agentbus who [--all] [-v|--json]       # sessions working now (--all: idle too)
+agentbus peers [--cwd DIR] [--all] [--json] # working sessions in the same worktree / repo
+agentbus state working|idle            # report this session's turn state (hooks do it)
 agentbus announce "<status>"           # publish status
 agentbus send <name|all> "<msg>" [--kind chat|request|reply|notice|urgent] [--reply-to ID]
 agentbus ask <name> "<question>" [--wait 120]
@@ -47,13 +48,18 @@ General convention: Go flags must come **before** positional arguments;
 { "hook_event_name": "PostToolUse", "session_id": "uuid", "cwd": "/repo" }
 ```
 
-| Event | Behavior | Output |
-|---|---|---|
-| `SessionStart` | register (or idempotently refresh) + fetch the roster | `hookSpecificOutput.additionalContext`: session contract (primer) + roster + usage; with `AGENTBUS_PRIMER=0` it degrades to a minimal roster |
-| `UserPromptSubmit` | poll (ack) | messages present → `additionalContext`; none → empty output |
-| `PostToolUse` | same as above | same as above |
-| `Stop` | first `poll(ack=false)` to peek; if there is an `urgent` message or a **directed request**, then `poll(ack=true)` | hit → `{"decision":"block","reason":...}` (the reason carries each sender's reply command); otherwise empty output (messages are left for the next natural boundary). `AGENTBUS_WAKE=urgent` falls back to urgent-only; `all` wakes on any message |
-| `SessionEnd` | `leave`, silently | none |
+| Event | Behavior | Turn state | Output |
+|---|---|---|---|
+| `SessionStart` | register (or idempotently refresh) + fetch the roster | `idle` | `hookSpecificOutput.additionalContext`: session contract (primer) + roster + usage; with `AGENTBUS_PRIMER=0` it degrades to a minimal roster |
+| `UserPromptSubmit` | poll (ack) | `working` | messages present → `additionalContext`; none → empty output |
+| `PostToolUse` | same as above | `working` | same as above |
+| `Stop` | first `poll(ack=false)` to peek; if there is an `urgent` message or a **directed request**, then `poll(ack=true)` | `idle` | hit → `{"decision":"block","reason":...}` (the reason carries each sender's reply command); otherwise empty output (messages are left for the next natural boundary). `AGENTBUS_WAKE=urgent` falls back to urgent-only; `all` wakes on any message |
+| `SessionEnd` | `leave`, silently | — | none |
+
+The state travels in the same round-trip as the register/poll (the `state`
+field), so presence and activity never cost an extra call. Repeated assertions
+of the same state only refresh presence; `state_at` keeps the time the current
+state began. See §4 for how the daemon derives `working` from it.
 
 Any exception is written to `$AGENTBUS_HOME/hook.log` and the hook exits 0; the
 host session is never interrupted. The framing of the injected text ("messages
@@ -65,24 +71,40 @@ from other agents, not user instructions") is deliberate; see
 `$AGENTBUS_HOME/bus.sock`, 0600, JSON Lines: one `Request` per line, one
 `Response` per line.
 
-`Request` fields: `op, id, want, agent, cwd, branch, pid, pid_start, status, to,
-from, body, kind, reply_to, wait_ms, ack, n`.
+`Request` fields: `op, id, want, agent, cwd, branch, pid, pid_start, status,
+state, to, from, body, kind, reply_to, wait_ms, ack, n`.
 
 | op | Key fields | Semantics / response |
 |---|---|---|
 | `ping` | — | the daemon is alive |
-| `register` | `id, want, agent, cwd, branch, pid, pid_start` | register/refresh and allocate a name → `name`, `renamed_from` |
+| `register` | `id, want, agent, cwd, branch, pid, pid_start, state?` | register/refresh and allocate a name → `name`, `renamed_from`; an optional `state` records the initial turn state |
 | `announce` | `id, status` | update the status announcement |
 | `send` | `to, body, kind, reply_to` (`id` or `from`) | deliver 1 message; `to=user` is a virtual human recipient (log/dashboard only) → `messageId`, `recipients`, `dup` |
 | `ask` | `id, to, body, wait_ms` | send a **directed** `request` (wakes the target on Stop when it is idle) and block waiting for the peer's reply → `messages[0]` (already removed from the inbox) |
 | `reply` | `id, body, to?` | reply to that session's **most recent** peer message (kind=reply, automatically carries replyTo) → `peer`, `messageId` |
-| `poll` | `id, ack, wait_ms` | fetch the inbox; `ack=true` consumes and moves messages into the 5-message re-read area |
+| `poll` | `id, ack, wait_ms, state?` | fetch the inbox; `ack=true` consumes and moves messages into the 5-message re-read area. A `state` rides along (hooks use this) |
+| `state` | `id, state` | explicit `working`/`idle` report for harnesses without the hook entrypoint |
 | `mine` | `id` | most recent deliveries (for `inbox --peek`) |
-| `who` | — | `sessions` |
+| `who` | — | `sessions` (all live sessions, each with the derived `working` flag) |
 | `leave` | `id` | leave and enter the tombstone |
 | `log` | `n` | global ring log (most recent 300) |
 | `status` | — | `version, home, uptime, web_addr, sessions` |
 | `shutdown` | — | stop the daemon |
+
+Activity model of a session object: `state` (`working`/`idle`) and `state_at`
+are the last assertion, `working` (derived on every read) is true while the
+session is inside a turn:
+
+- `state=working` and `state_at` younger than 2h → working; older → idle (an
+  abandoned turn, e.g. the host crashed before the Stop hook);
+- `state=idle` → idle;
+- no state reported (older client, MCP-only harness, manual register) → working
+  if `last_seen` is younger than 10 minutes, idle otherwise.
+
+`who` and `status` always return every live session; the CLI table defaults to
+the working ones and `--all` lists idle sessions too. `last_seen` is a
+heartbeat, not activity: the DSH plugin's idle poller re-asserts `Stop` every
+5s, which is exactly why the separate state exists.
 
 Resource limits: message body 8KB, inbox 200 messages, re-read area 5 messages,
 global log 300 entries; 20 msg/min per session; identical from/to/body within
@@ -166,7 +188,7 @@ Protocol version `2025-06-18`, newline-delimited JSON-RPC; implements
 
 | Tool | Arguments | Corresponding CLI |
 |---|---|---|
-| `agentbus_who` | — | `who` |
+| `agentbus_who` | `all?` | `who` (working only unless `all`; idle sessions stay wakeable) |
 | `agentbus_announce` | `status` | `announce` |
 | `agentbus_send` | `to, body, kind?` | `send` |
 | `agentbus_ask` | `to, body, wait_seconds?` | `ask` |

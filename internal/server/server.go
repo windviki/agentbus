@@ -141,6 +141,13 @@ func (s *Server) dispatch(r *proto.Request) (proto.Response, bool) {
 			return errResp(err), false
 		}
 		s.b.SetRepo(r.ID, r.Repo)
+		// A hook may report the turn state with the same round-trip; a
+		// SessionStart registers the session as idle until its first prompt.
+		if r.State != "" {
+			if _, err := s.b.SetState(r.ID, r.State); err != nil {
+				return errResp(err), false
+			}
+		}
 		resp.Name, resp.RenamedFrom, resp.Agent = sess.Name, renamed, sess.Agent
 		resp.Sessions = others(s.b.Who(), sess.Name)
 		s.save()
@@ -214,6 +221,14 @@ func (s *Server) dispatch(r *proto.Request) (proto.Response, bool) {
 		if r.Ack != nil {
 			ack = *r.Ack
 		}
+		// Hooks piggyback the turn state on every poll (the Stop hook says
+		// "idle", the prompt/tool hooks say "working"), so presence and
+		// activity stay one round-trip.
+		if r.State != "" {
+			if _, err := s.b.SetState(r.ID, r.State); err != nil {
+				return errResp(err), false
+			}
+		}
 		msgs, name, err := s.b.Poll(r.ID, ack, time.Duration(r.WaitMs)*time.Millisecond)
 		if err != nil {
 			return errResp(err), false
@@ -222,6 +237,15 @@ func (s *Server) dispatch(r *proto.Request) (proto.Response, bool) {
 		if ack && len(msgs) > 0 {
 			s.save()
 		}
+	case "state":
+		// Explicit state report for harnesses that do not run `agentbus hook`
+		// (MCP-only clients, integration scripts).
+		sess, err := s.b.SetState(r.ID, r.State)
+		if err != nil {
+			return errResp(err), false
+		}
+		resp.Name = sess.Name
+		s.save()
 	case "mine":
 		mine, name, err := s.b.Mine(r.ID)
 		if err != nil {

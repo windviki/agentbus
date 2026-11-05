@@ -6,7 +6,27 @@ All notable user-visible changes are documented here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- Session activity state: hooks report `working` at turn start / tool calls and
+  `idle` at Stop, so the bus can tell "doing something now" from "finished but
+  still alive". A stale `working` assertion (older than 2h) is treated as an
+  abandoned turn.
+- `agentbus who --all` and `agentbus peers --all` list idle sessions;
+  `agentbus state working|idle` lets hook-less integrations report the state;
+  the MCP `agentbus_who` tool takes `all`; the dashboard marks sessions
+  `进行中` / `空闲` and sorts working sessions first.
+
+### Changed
+
+- `agentbus who`, `agentbus peers`, the SessionStart join summary and
+  `agentbus status` list only sessions currently working by default. Finished
+  sessions used to clutter every new session's roster, especially under DSH and
+  Kimi, where one long-lived host PID keeps every past session "alive". Idle
+  sessions remain registered, addressable and wakeable by a directed request.
+- Protocol: `register` and `poll` accept an optional `state`, a new `state` op
+  reports it explicitly, and session objects carry `state`, `state_at` and the
+  derived `working` flag. `who` still returns every live session.
 
 ## [0.1.0] - 2026-10-30
 

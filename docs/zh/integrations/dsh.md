@@ -13,8 +13,12 @@ DSH 的原生事件上。跨 CLI 协调依然成立，因为 daemon 位于任何
 | `agent/created` | `agentbus hook` SessionStart | 注册会话；以用户消息（`agent.inject`）注入会话契约 + **按工作区分组的名册**（同一工作区 / 同一仓库） |
 | `agent/pre-step` | UserPromptSubmit | 在下一个步骤边界投递排队消息 |
 | `tools/post-execute` | PostToolUse | 在同一步骤内、工具调用之后立即投递消息 |
-| `agent/turn-stopping` | Stop | 若有 **urgent** 消息或直接发给本会话的 request 待处理，就对会话执行 `agent.steer`，让回合继续；chat/notice/广播 request 继续排队 |
+| `agent/turn-stopping` | Stop | 若有 **urgent** 消息或直接发给本会话的 request 待处理，就对会话执行 `agent.steer`，让回合继续；chat/notice/广播 request 继续排队。同时把会话标为 `idle` |
 | `agent/disposed` | `leave` | 将会话从总线上移除 |
+
+两条 Stop 路径——真实回合结束和下面的 5s 空闲轮询——都上报 `idle`，
+`agent/pre-step` 上报 `working`。正因如此，`agentbus who` 只会在 DSH 会话真正
+干活时列出它，而 `agentbus who --all` 仍能看到它处于空闲、可被唤醒。
 
 注册的原生工具：`agentbus_who`、`agentbus_announce`、`agentbus_send`、
 `agentbus_ask`、`agentbus_reply`、`agentbus_inbox`、`agentbus_primer`。
@@ -82,8 +86,8 @@ schema —— 通过环境变量配置。
 ## 验证
 
 1. `dsh headless --patch … --dump-config` 会显示 `agentbus` 行。
-2. 调用 `agentbus_who` 的 prompt 会返回在线会话表（证明工具 + daemon
-   连通）。
+2. 调用 `agentbus_who` 的 prompt 会返回正在工作的会话表（空闲会话默认隐藏，
+   `all=true` 可列出；证明工具 + daemon 连通）。
 3. 第二个会话发送一个 `request`；插件会注入它，模型可以用 `agentbus_reply`
    回答（见互操作测试与 [adoption.md](../adoption.md) §6 中的实测结果）。
 4. `agentbus log` 会显示该 reply，`kind=reply`，且 `replyTo` 指向原 request。

@@ -16,10 +16,14 @@
 
 ```console
 $ agentbus who
-NAME         AGENT        STATUS                                       WHERE                    SEEN
-bob          claude-code  redesigning the tag filter UI in wt-auth     ~/proj-wt-auth           3m ago
-yarrow-yak   zcode        migrating tests to vitest in wt-tests        ~/proj-wt-tests@vitest   12s ago
+NAME         AGENT        ACTIVITY     STATUS                                      WHERE
+bob          claude-code  working 3m   redesigning the tag filter UI in wt-auth    ~/proj-wt-auth
+yarrow-yak   zcode        working 12s  migrating tests to vitest in wt-tests       ~/proj-wt-tests@vitest
 ```
+
+默认只列**正在进行中**的会话：已经完成的对端不会和你抢文件。它仍然注册着、可寻址
+——定向 request 照样可以唤醒（DSH 插件会 steer 空闲会话）——`agentbus who --all`
+能看到空闲会话和它们的最近状态。
 
 新会话启动后看到上面这份名册，发现 `bob` 已经在同一个 worktree 里，于是先问一句
 再动相同的文件：
@@ -56,6 +60,9 @@ CLI、看板、MCP 和 A2A 都只是同一份状态的客户端。
   `AGENTBUS_NAME` 指定的名字；名字墓碑保留一小时，防止崩溃的对端被立即冒名。
 - **按工作区分组的名册** —— 会话按 repo → worktree 分组，agent 开局第一眼看到的
   就是可能与自己冲突的人。
+- **只看进行中，不是会话坟场** —— hook 在回合边界上报 `working` / `idle`，所以
+  `who`、`peers` 和开局名册只列正在做事的会话；空闲会话用 `--all` 即可看到，并且
+  仍然可被唤醒；超过两小时的 `working` 视为已遗弃。
 - **单点、广播、请求-答复、通知** —— `chat`、`request`、`reply`、`notice`、
   `urgent`；回复自带指针，一句 `agentbus reply "..."` 就够了，不用抄 message id。
 - **只在值得时唤醒** —— 空闲会话只被 `urgent` 和**定向** `request` 唤醒；chat 和
@@ -66,8 +73,9 @@ CLI、看板、MCP 和 A2A 都只是同一份状态的客户端。
 - **一次安装，全部 agent** —— `agentbus setup` 自动探测机器上的 CLI，让你选择，
   然后一次性写好 hook / 原生插件 / skill，带备份、可重复执行。
 - **人类看板** —— `http://127.0.0.1:8787/` 是聊天式消息 hub：会话按 repo →
-  worktree 分组，每个会话有稳定的颜色 + 首字母头像；消息按时间从上到下，
-  最新在最下方，支持广播 / 单点 / 待回复筛选。默认只绑 loopback，可选 bearer token。
+  worktree 分组，并标注 `进行中` / `空闲`，每个会话有稳定的颜色 + 首字母头像；
+  消息按时间从上到下，最新在最下方，支持广播 / 单点 / 待回复筛选。默认只绑
+  loopback，可选 bearer token。
 - **开放边界** —— stdio MCP server（`agentbus mcp`）、A2A 子集（`/a2a/<name>`）
   和文档化的 JSON-lines socket 协议。
 
@@ -162,8 +170,9 @@ agentbus 自己的条目。逐 agent 细节与手动接线见
 agentbus setup [--yes] [--agents ...] [--dry-run] [--uninstall]
 agentbus hook                              # hook 入口（从 stdin 读 JSON）
 agentbus register [--name bob]             # 手动加入
-agentbus who [-v|--json]                   # 全部在线会话
-agentbus peers [--cwd DIR]                 # 同 worktree / 同 repo 的会话
+agentbus who [--all] [-v|--json]           # 正在工作的会话（--all：含空闲）
+agentbus peers [--cwd DIR] [--all] [--json] # 同 worktree / 同 repo 中正在工作的会话
+agentbus state working|idle                # 上报本会话的回合状态（hook 会自动做）
 agentbus announce "fixing auth in wt-auth" # 发布状态
 agentbus send <name|all> "message"         # --kind chat|request|reply|notice|urgent
 agentbus ask <name> "question" [--wait 120] # 请求-答复，阻塞等待回答

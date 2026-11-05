@@ -121,7 +121,8 @@ RUN_INTEROP=1 RUN_INTEROP_BASELINE=1 ./test/interop.sh   # 再加无 primer 基�
 安装：`agentbus setup --agents zcode`（源码检出可用 `./scripts/install.sh --zcode-hooks`）。用 `zcode -p`（桌面 bundle 的
 `server-3.16/glm/zcode.cjs`）在 `/tmp/ab-zrepo` 起真实会话：
 
-- SessionStart hook 注册成功，`agentbus who` 出现 `zcode` 会话；
+- SessionStart hook 注册成功，`agentbus who --all` 出现 `zcode` 会话（它当时处于
+  空闲；`who` 现在默认只列正在回合中的会话）；
 - 会话运行中从 peer 发 `request`，hook 注入后模型执行 `agentbus reply`，
   总线日志为 `zprobe3→zpeer: z-ack-9`（带 replyTo）；
 - 身份修复：ZCode 不给 Bash 传 session id，靠 hook 写入的 pid→sid 映射解析
