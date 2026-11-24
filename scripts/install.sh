@@ -84,7 +84,7 @@ EOF
 fi
 
 [ -f "$ROOT/go.mod" ] || die "run this from an agentbus source checkout"
-command -v go >/dev/null || die "Go 1.22+ is required to build from source; install Go, or use 'npm i -g agentbus-cli'"
+command -v go >/dev/null || die "Go 1.22+ is required to build from source; install Go, or use 'npm i -g @aixyzstudio/agentbus-cli'"
 
 log "== building agentbus"
 mkdir -p "$BIN_DEST"

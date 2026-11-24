@@ -1,63 +1,57 @@
 # Releasing agentbus
 
-The release is one immutable version published to three places:
+One immutable version is published to three places:
 
-1. **npm** — `agentbus-cli` plus four platform packages that carry the
-   prebuilt binaries.
-2. **GitHub Releases** — per-platform `.tar.gz` archives + `SHA256SUMS` for
-   people who do not use npm.
-3. **The git tag** — `v<version>`, which is what CI builds from.
+1. **npm** — `@aixyzstudio/agentbus-cli` plus four scoped platform packages
+   containing prebuilt binaries.
+2. **GitHub Releases** — per-platform `.tar.gz` archives + `SHA256SUMS`.
+3. **The git tag** — `v<version>`, from which CI builds.
 
-`scripts/build-release.sh` produces every artifact from one checkout. The
-release workflow runs the same script, so a local rehearsal and CI cannot
-diverge.
+`scripts/build-release.sh` produces every artifact from one checkout; the
+release workflow runs the same script.
 
 ## Versioning
 
-- Semver. Pre-1.0 minor bumps may change CLI flags; document it in
-  `CHANGELOG.md`.
-- One version string appears in three places: `internal/server/server.go`
-  (`var Version`), `npm/cli/package.json`, and the platform package manifests.
-  `build-release.sh` rewrites all npm manifests from `VERSION`, and injects the
-  Go version with `-ldflags -X`, so the Go default is only a development
-  fallback.
-- Tag format: `v0.2.0` (the workflow strips the leading `v`).
+- Use semver and document changes in `CHANGELOG.md`.
+- `npm/cli/package.json` and all platform manifests carry the same version.
+  `build-release.sh` rewrites them from `VERSION` and injects it with Go
+  `-ldflags`; `internal/server.Version` is only a development fallback.
+- Tags look like `v0.2.0`.
 
 ## One-time setup
 
-- npm account with publish rights for `agentbus-cli` and
-  `agentbus-cli-{linux,darwin}-{x64,arm64}`. The unscoped name `agentbus` is
-  already taken by an unrelated project, which is why the CLI package carries
-  the `-cli` suffix; the installed binary is still `agentbus`.
-- Repository secret `NPM_TOKEN` (automation token, publish permission).
-- GitHub repository `windviki/agentbus` (the URLs in `package.json`,
-  `README.md` and `go.mod` assume it; update all three if the repo moves).
-- `gh` is optional locally; CI uses the built-in `GITHUB_TOKEN`.
+- An npm token with publish permission for the **`@aixyzstudio` scope**, valid
+  for `@aixyzstudio/agentbus-cli` and
+  `@aixyzstudio/agentbus-cli-{linux,darwin}-{x64,arm64}`. A token scoped only to
+  another organization or to `@windviki` will fail with 403. Check with
+  `npm token list --json --registry=https://registry.npmjs.org/`.
+- Repository secret `NPM_TOKEN` with those same rights. The installed command
+  remains `agentbus`; the bare `agentbus` package is unrelated.
+- GitHub repository `windviki/agentbus`; update repository URLs if it moves.
 
-## Local release rehearsal
+## Local rehearsal
 
 ```bash
-# 1. clean tree, all tests green
 go test -race ./...
 ./test/setup.sh
 ./test/e2e.sh
 ./scripts/test-npm.sh
 
-# 2. build all artifacts (version from npm/cli/package.json by default)
 VERSION=0.2.0 ./scripts/build-release.sh
 ls -lh dist/
-#   agentbus-cli-0.2.0.tgz
-#   agentbus-cli-linux-x64-0.2.0.tgz ... (4 platforms)
+#   aixyzstudio-agentbus-cli-0.2.0.tgz
+#   aixyzstudio-agentbus-cli-linux-x64-0.2.0.tgz ... (4 platforms)
 #   agentbus-0.2.0-linux-amd64.tar.gz ... (4 archives)
 #   SHA256SUMS
 
-# 3. install the packed artifacts exactly like a user
 tmp=$(mktemp -d)
-npm install -g --prefix "$tmp" dist/agentbus-cli-linux-x64-0.2.0.tgz dist/agentbus-cli-0.2.0.tgz
+npm install -g --prefix "$tmp" \
+  dist/aixyzstudio-agentbus-cli-linux-x64-0.2.0.tgz \
+  dist/aixyzstudio-agentbus-cli-0.2.0.tgz
 "$tmp/bin/agentbus" version
 ```
 
-Fast iteration without all four targets:
+For one target only:
 
 ```bash
 TARGETS="linux/amd64" OUT=/tmp/agentbus-dist ./scripts/build-release.sh
@@ -65,24 +59,23 @@ TARGETS="linux/amd64" OUT=/tmp/agentbus-dist ./scripts/build-release.sh
 
 ## Publish
 
-Publish **platform packages first**, then the CLI package. npm resolves the
-CLI's `optionalDependencies` during install, so a CLI published first would
-`npm install` without a binary for a few minutes.
+Publish **platform packages first**, then the CLI. npm resolves the CLI's
+scoped `optionalDependencies` during installation.
 
-Check `npm config get registry` first: a corporate/mirror registry (for example
-`registry.npmmirror.com`) accepts installs but not publishes. Either log in to
-the registry you actually publish to, or pass
-`--registry https://registry.npmjs.org` to every publish command below.
+A mirror such as `registry.npmmirror.com` may work for installs but not for this
+publish credential; pass `--registry https://registry.npmjs.org/` explicitly.
 
 ```bash
-npm login
-for pkg in dist/agentbus-cli-*-<version>.tgz; do
-  npm publish "$pkg" --access public
+for name in agentbus-cli-linux-x64 agentbus-cli-linux-arm64 \
+            agentbus-cli-darwin-x64 agentbus-cli-darwin-arm64; do
+  npm publish "dist/aixyzstudio-$name-0.2.0.tgz" \
+    --access public --registry=https://registry.npmjs.org/
 done
-npm publish "dist/agentbus-cli-<version>.tgz" --access public
+npm publish "dist/aixyzstudio-agentbus-cli-0.2.0.tgz" \
+  --access public --registry=https://registry.npmjs.org/
 ```
 
-Then create the GitHub release:
+Then create the GitHub release if desired:
 
 ```bash
 gh release create "v0.2.0" \
@@ -92,44 +85,43 @@ gh release create "v0.2.0" \
 
 ## Automated release
 
-`.github/workflows/release.yml` runs on a pushed `v*` tag:
-
-1. `go test`, `test/setup.sh`, `test-npm.sh`;
-2. `scripts/build-release.sh` with the tag version;
-3. uploads assets to the GitHub release;
-4. publishes platform packages, then `agentbus-cli`, skipping any package
-   version that already exists (so a failed run can be re-run).
+`.github/workflows/release.yml` runs on a pushed `v*` tag: tests, artifact
+build, GitHub release upload, then scoped platform packages followed by
+`@aixyzstudio/agentbus-cli`. Existing package versions are skipped so a failed
+run can be retried.
 
 ```bash
 git tag v0.2.0
 git push origin v0.2.0
 ```
 
-The workflow needs the `NPM_TOKEN` secret. It also uses `id-token: write` only
-for repository permissions, not for npm provenance; add
-`--provenance` to the `npm publish` commands if you want provenance
-attestations (requires the package to be built in a public repository).
+The workflow needs the scoped `NPM_TOKEN` described above. `id-token: write` is
+for repository permissions, not npm provenance; add `--provenance` separately
+if provenance attestations are wanted.
 
 ## After publishing
 
-- `npm view agentbus-cli version` and `npm dist-tag ls agentbus-cli`.
-- Install from a clean machine/container:
-  `npm i -g agentbus-cli && agentbus version && agentbus setup --dry-run`.
-- Verify the GitHub archives: `sha256sum -c SHA256SUMS`, unpack one, run
-  `./agentbus version`.
-- Move the `## [Unreleased]` section of `CHANGELOG.md` to the released version
-  and commit it before tagging (the tag points at that commit).
-- If a release is broken, publish a patch version. Do not unpublish: npm
-  versions are immutable. If necessary, deprecate the broken version:
-  `npm deprecate agentbus-cli@0.2.0 "broken binary; use 0.2.1"`.
+```bash
+npm view @aixyzstudio/agentbus-cli version --registry=https://registry.npmjs.org/
+npm dist-tag ls @aixyzstudio/agentbus-cli --registry=https://registry.npmjs.org/
+npm install -g @aixyzstudio/agentbus-cli
+agentbus version
+agentbus setup --dry-run
+```
+
+Also verify `sha256sum -c SHA256SUMS` and one unpacked binary. Publish a patch
+for a broken release; do not unpublish. Deprecate if needed:
+
+```bash
+npm deprecate @aixyzstudio/agentbus-cli@0.2.0 "broken binary; use 0.2.1"
+```
 
 ## Checklist
 
-- [ ] `CHANGELOG.md` has the release notes under the new version
-- [ ] `go.mod` / README requirements match the Go version used in CI
-- [ ] `npm/cli/LICENSE` is identical to the repository `LICENSE`
+- [ ] `CHANGELOG.md` contains the new version
+- [ ] npm token has `@aixyzstudio` publish rights
 - [ ] `go test -race ./...`, `./test/setup.sh`, `./test/e2e.sh` pass
 - [ ] `./scripts/test-npm.sh` passes
-- [ ] `./scripts/build-release.sh` output verified locally
-- [ ] tag pushed, workflow green, GitHub release has 4 archives + checksums
-- [ ] npm shows the new `latest`
+- [ ] `./scripts/build-release.sh` artifacts and checksums verified
+- [ ] tag pushed, workflow green, GitHub release has four archives + checksums
+- [ ] npm shows the new `latest` and a clean install runs `agentbus version`

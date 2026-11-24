@@ -10,7 +10,7 @@
 在终端之间手动复制粘贴，空闲时不烧一个 token。
 
 [![CI](https://github.com/windviki/agentbus/actions/workflows/ci.yml/badge.svg)](https://github.com/windviki/agentbus/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/agentbus-cli?label=npm)](https://www.npmjs.com/package/agentbus-cli)
+[![npm](https://img.shields.io/npm/v/@aixyzstudio/agentbus-cli?label=npm)](https://www.npmjs.com/package/@aixyzstudio/agentbus-cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8.svg)](go.mod)
 
@@ -88,7 +88,7 @@ CLI、看板、MCP 和 A2A 都只是同一份状态的客户端。
 ### npm（推荐）
 
 ```bash
-npm install -g agentbus-cli
+npm install -g @aixyzstudio/agentbus-cli
 agentbus setup          # 自动探测 agent，选择后一次性接好
 agentbus doctor         # 自检
 ```
@@ -102,8 +102,8 @@ agentbus setup --dry-run                # 只打印计划，不写文件
 agentbus setup --uninstall              # 移除接线
 ```
 
-> npm 包名是 **`agentbus-cli`**（裸名 `agentbus` 在 npm 上属于另一个无关项目）。
-> 安装后的命令叫 `agentbus`。
+> npm 包名是 **`@aixyzstudio/agentbus-cli`**，安装后的命令叫 `agentbus`。
+> 裸名 `agentbus` 属于另一个无关项目。
 
 ### 从源码安装
 

@@ -1,4 +1,4 @@
-# agentbus-cli
+# @aixyzstudio/agentbus-cli
 
 **A local message bus for parallel AI coding-agent sessions.**
 
@@ -8,7 +8,7 @@ announce their work, ask each other questions, and split tasks before they
 collide — with **zero token cost while idle**.
 
 ```bash
-npm install -g agentbus-cli
+npm install -g @aixyzstudio/agentbus-cli
 agentbus setup          # detects your agents, asks which to wire
 agentbus doctor
 ```
@@ -39,10 +39,10 @@ yarrow-yak   zcode        working 12s  migrating tests to vitest in wt-tests    
   (`agentbus mcp`) and an A2A subset for other harnesses.
 - Linux and macOS (x64/arm64). Windows is not supported yet.
 
-The binary is shipped by platform packages
-(`agentbus-cli-linux-x64`, `agentbus-cli-linux-arm64`,
-`agentbus-cli-darwin-x64`, `agentbus-cli-darwin-arm64`); there is no
-postinstall download.
+The binary is shipped by scoped platform packages
+(`@aixyzstudio/agentbus-cli-linux-x64`, `@aixyzstudio/agentbus-cli-linux-arm64`,
+`@aixyzstudio/agentbus-cli-darwin-x64`, `@aixyzstudio/agentbus-cli-darwin-arm64`);
+there is no postinstall download.
 
 Full documentation, design notes and per-agent guides:
 [github.com/windviki/agentbus](https://github.com/windviki/agentbus).

@@ -46,7 +46,7 @@ token 开销），所以有 hook 能力的 agent 应改用 hooks。
 
 ## 方案 B：只用 skill + CLI
 
-1. `npm install -g agentbus-cli && agentbus setup` —— setup 步骤会把 skill
+1. `npm install -g @aixyzstudio/agentbus-cli && agentbus setup` —— setup 步骤会把 skill
    安装到 `~/.agents/skills/agentbus/`（以及每个已经存在的 agent skill
    目录）。源码 checkout 请用 `./scripts/install.sh`。
 2. 确保 agent 会加载该 skill（放进它的 skill/command 发现目录），并确保

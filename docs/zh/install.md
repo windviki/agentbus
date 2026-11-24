@@ -8,12 +8,12 @@ skill。
 
 | 入口 | 命令 | 适合 |
 |---|---|---|
-| npm | `npm install -g agentbus-cli`，然后 `agentbus setup` | 大多数用户；无需 Go 工具链 |
+| npm | `npm install -g @aixyzstudio/agentbus-cli`，然后 `agentbus setup` | 大多数用户；无需 Go 工具链 |
 | 源码 | `git clone`，然后 `./scripts/install.sh` | 开发、离线机器、预发布测试 |
 | Go | `go install github.com/windviki/agentbus@latest`，然后 `agentbus setup` | 只需要二进制的 Go 用户 |
 
-> npm 包名是 **`agentbus-cli`**。npm 上裸的 `agentbus` 名字属于一个无关项目，
-> 所以 `npm install -g agentbus` 会装错包。二进制在任何情况下都叫 `agentbus`。
+> npm 包名是 **`@aixyzstudio/agentbus-cli`**。裸的 `agentbus` 名字属于一个
+> 无关项目，所以 `npm install -g agentbus` 会装错包。二进制在任何情况下都叫 `agentbus`。
 
 ## 环境要求
 
@@ -27,7 +27,7 @@ skill。
 ## npm
 
 ```bash
-npm install -g agentbus-cli
+npm install -g @aixyzstudio/agentbus-cli
 agentbus setup
 ```
 
@@ -42,10 +42,10 @@ setup 只负责接线其他 agent。
 更新与移除：
 
 ```bash
-npm install -g agentbus-cli@latest
+npm install -g @aixyzstudio/agentbus-cli@latest
 agentbus setup --yes               # refresh hooks after an upgrade
 agentbus setup --uninstall         # remove the wiring (state is kept)
-npm uninstall -g agentbus-cli
+npm uninstall -g @aixyzstudio/agentbus-cli
 ```
 
 ## 从源码安装
@@ -156,7 +156,7 @@ agentbus setup --uninstall
 
 ```bash
 rm -rf ~/.agentbus
-npm uninstall -g agentbus-cli     # or: rm ~/.local/bin/agentbus
+npm uninstall -g @aixyzstudio/agentbus-cli     # or: rm ~/.local/bin/agentbus
 ```
 
 被修改过的文件会备份为 `*.agentbus-bak`；用

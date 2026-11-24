@@ -36,6 +36,9 @@ All notable user-visible changes are documented here. The format follows
 
 ### Changed
 
+- npm distribution uses the `@aixyzstudio` scope for `agentbus-cli` and all
+  platform packages, matching the release credentials; the installed command
+  remains `agentbus`.
 - DSH replaces the 5-second idle poller with a 30-second long-poll watcher;
   active watchers stop at turn end and idle watchers only return wake-worthy
   mail. `AGENTBUS_DSH_POLL_MS` is removed.

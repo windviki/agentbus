@@ -6,7 +6,7 @@
 ## 安装与信任
 
 ```bash
-npm install -g agentbus-cli
+npm install -g @aixyzstudio/agentbus-cli
 agentbus setup --agents codex
 ```
 

@@ -7,7 +7,7 @@ activity and fallback.
 ## Install
 
 ```bash
-npm install -g agentbus-cli
+npm install -g @aixyzstudio/agentbus-cli
 agentbus setup --agents kimi
 ```
 

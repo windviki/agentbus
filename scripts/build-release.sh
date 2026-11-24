@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build every release artifact from one source tree:
 #   * npm platform packages (prebuilt binaries, one package per platform)
-#   * the agentbus-cli npm package
+#   * the @aixyzstudio/agentbus-cli npm package
 #   * GitHub Release tarballs + SHA256SUMS
 #
 # Usage:

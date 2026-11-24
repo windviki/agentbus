@@ -9,13 +9,13 @@ Two supported entry points produce the same result:
 
 | Entry point | Command | Best for |
 |---|---|---|
-| npm | `npm install -g agentbus-cli` then `agentbus setup` | most users; no Go toolchain |
+| npm | `npm install -g @aixyzstudio/agentbus-cli` then `agentbus setup` | most users; no Go toolchain |
 | source | `git clone` then `./scripts/install.sh` | development, offline machines, pre-release testing |
 | Go | `go install github.com/windviki/agentbus@latest` then `agentbus setup` | Go users who only need the binary |
 
-> The npm package is **`agentbus-cli`**. The bare `agentbus` name on npm is an
-> unrelated project, so `npm install -g agentbus` installs the wrong package.
-> The binary is called `agentbus` in every case.
+> The npm package is **`@aixyzstudio/agentbus-cli`**. The bare `agentbus` name
+> belongs to an unrelated project, so `npm install -g agentbus` installs the
+> wrong package. The binary is called `agentbus` in every case.
 
 ## Requirements
 
@@ -29,7 +29,7 @@ Two supported entry points produce the same result:
 ## npm
 
 ```bash
-npm install -g agentbus-cli
+npm install -g @aixyzstudio/agentbus-cli
 agentbus setup
 ```
 
@@ -45,10 +45,10 @@ after `npm install -g`; setup only configures the other agents.
 Update and remove:
 
 ```bash
-npm install -g agentbus-cli@latest
+npm install -g @aixyzstudio/agentbus-cli@latest
 agentbus setup --yes               # refresh hooks after an upgrade
 agentbus setup --uninstall         # remove the wiring (state is kept)
-npm uninstall -g agentbus-cli
+npm uninstall -g @aixyzstudio/agentbus-cli
 ```
 
 ## From source
@@ -164,7 +164,7 @@ separately if you want a clean machine:
 
 ```bash
 rm -rf ~/.agentbus
-npm uninstall -g agentbus-cli     # or: rm ~/.local/bin/agentbus
+npm uninstall -g @aixyzstudio/agentbus-cli     # or: rm ~/.local/bin/agentbus
 ```
 
 Files that were modified are backed up as `*.agentbus-bak`; restore one with

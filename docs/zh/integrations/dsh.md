@@ -29,7 +29,7 @@ watcher 与生命周期 hooks 的收件箱 ack 是原子的，避免重复投递
 `AGENTBUS_HOME`。
 
 ```bash
-npm install -g agentbus-cli
+npm install -g @aixyzstudio/agentbus-cli
 agentbus setup --agents dsh
 ```
 

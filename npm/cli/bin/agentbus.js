@@ -2,7 +2,7 @@
 'use strict';
 
 // Resolve the platform-specific agentbus binary and hand over argv unchanged.
-// The binary is shipped by a per-platform package so `npm i -g agentbus-cli`
+// The binary is shipped by a per-platform package so `npm i -g @aixyzstudio/agentbus-cli`
 // needs no network access to GitHub and no postinstall script. The Go binary
 // is the real CLI; this file only locates it.
 
@@ -28,7 +28,7 @@ function candidates() {
   const list = [];
   if (process.env.AGENTBUS_BIN) list.push(process.env.AGENTBUS_BIN);
   try {
-    const pkg = require.resolve(`agentbus-cli-${key}/package.json`);
+    const pkg = require.resolve(`@aixyzstudio/agentbus-cli-${key}/package.json`);
     list.push(path.join(path.dirname(pkg), 'bin', exe));
   } catch (_) {
     // not installed as an optional dependency (local checkout or npm quirk)
@@ -64,7 +64,7 @@ console.error(
   `agentbus: no binary for ${key}.\n` +
   `This package ships ${['linux-x64', 'linux-arm64', 'darwin-x64', 'darwin-arm64'].join(', ')} on npm.\n` +
   `Tried:\n  ${tried.join('\n  ')}\n` +
-  `Reinstall with: npm install -g agentbus-cli\n` +
+  `Reinstall with: npm install -g @aixyzstudio/agentbus-cli\n` +
   `Source checkout: ./scripts/install.sh\n` +
   `Releases: https://github.com/windviki/agentbus/releases`
 );

@@ -8,7 +8,7 @@ liveness handles exit. Config hooks live under `hooks.events.*` and require
 ## Install
 
 ```bash
-npm install -g agentbus-cli
+npm install -g @aixyzstudio/agentbus-cli
 agentbus setup --agents zcode
 ```
 

@@ -8,7 +8,7 @@ Channels 功能。
 ## 安装
 
 ```bash
-npm install -g agentbus-cli
+npm install -g @aixyzstudio/agentbus-cli
 agentbus setup --agents claude
 ```
 

@@ -53,7 +53,7 @@ body:
     attributes:
       label: How did you install?
       options:
-        - npm (agentbus-cli)
+        - npm (@aixyzstudio/agentbus-cli)
         - source checkout (scripts/install.sh)
         - go install
         - other / not sure

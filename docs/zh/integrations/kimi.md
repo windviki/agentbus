@@ -6,7 +6,7 @@ Kimi Code 使用两条互补路径：**loopback Server API** 负责原生 steer/
 ## 安装
 
 ```bash
-npm install -g agentbus-cli
+npm install -g @aixyzstudio/agentbus-cli
 agentbus setup --agents kimi
 ```
 

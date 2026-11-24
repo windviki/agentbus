@@ -3,7 +3,7 @@ package main
 // agentbus setup: detect the AI CLIs installed on this machine, let the user
 // pick which ones to wire, and configure them in one pass. The command is the
 // single installer behind both `scripts/install.sh` and the npm package, so a
-// from-source install and `npm i -g agentbus-cli && agentbus setup` take the
+// from-source install and `npm i -g @aixyzstudio/agentbus-cli && agentbus setup` take the
 // same code path.
 //
 // Everything it writes is idempotent: agentbus-owned hook entries are replaced,

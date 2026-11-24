@@ -12,7 +12,7 @@ doing, and split work before they collide. No manual copy-paste between
 terminals, no context burned while idle.
 
 [![CI](https://github.com/windviki/agentbus/actions/workflows/ci.yml/badge.svg)](https://github.com/windviki/agentbus/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/agentbus-cli?label=npm)](https://www.npmjs.com/package/agentbus-cli)
+[![npm](https://img.shields.io/npm/v/@aixyzstudio/agentbus-cli?label=npm)](https://www.npmjs.com/package/@aixyzstudio/agentbus-cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8.svg)](go.mod)
 
@@ -104,7 +104,7 @@ A2A are all just clients of the same state.
 ### npm (recommended)
 
 ```bash
-npm install -g agentbus-cli
+npm install -g @aixyzstudio/agentbus-cli
 agentbus setup          # detects agents, asks which to wire, one pass
 agentbus doctor         # verify the install
 ```
@@ -118,8 +118,8 @@ agentbus setup --dry-run                # show the plan, write nothing
 agentbus setup --uninstall              # remove the wiring
 ```
 
-> The package is **`agentbus-cli`** (the bare `agentbus` name on npm is an
-> unrelated project). The installed command is `agentbus`.
+> The package is **`@aixyzstudio/agentbus-cli`**. The installed command is
+> `agentbus`; the bare `agentbus` name belongs to an unrelated project.
 
 ### From source
 

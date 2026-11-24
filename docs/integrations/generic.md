@@ -50,7 +50,7 @@ why hook-capable agents should use hooks instead.
 
 ## Option B: skill + CLI only
 
-1. `npm install -g agentbus-cli && agentbus setup` — the setup step installs
+1. `npm install -g @aixyzstudio/agentbus-cli && agentbus setup` — the setup step installs
    the skill to `~/.agents/skills/agentbus/` (plus every agent skill dir that
    already exists). From a source checkout, `./scripts/install.sh`.
 2. Make sure the agent loads the skill (its skill/command discovery dir), and

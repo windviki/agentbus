@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke-test the npm distribution without publishing: build the native binary,
 # pack both packages, install them into a throwaway global prefix, and run the
-# CLI through the same launcher a user gets from `npm i -g agentbus-cli`.
+# CLI through the same launcher a user gets from `npm i -g @aixyzstudio/agentbus-cli`.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,8 +27,8 @@ node "$ROOT/npm/cli/bin/agentbus.js" version
 echo "== npm pack + global install"
 mkdir -p "$TMP/prefix"
 npm install -g --prefix "$TMP/prefix" --no-audit --no-fund --loglevel=error \
-  "$TMP/dist/agentbus-cli-$key-$version.tgz" \
-  "$TMP/dist/agentbus-cli-$version.tgz"
+  "$TMP/dist/aixyzstudio-agentbus-cli-$key-$version.tgz" \
+  "$TMP/dist/aixyzstudio-agentbus-cli-$version.tgz"
 
 BIN="$TMP/prefix/bin/agentbus"
 echo "== installed binary"

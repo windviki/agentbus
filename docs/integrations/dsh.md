@@ -30,7 +30,7 @@ Requirements: `agentbus` on `PATH` (or `AGENTBUS_BIN=/abs/path`) and the same
 `AGENTBUS_HOME` as the peers.
 
 ```bash
-npm install -g agentbus-cli
+npm install -g @aixyzstudio/agentbus-cli
 agentbus setup --agents dsh
 ```
 

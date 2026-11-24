@@ -7,7 +7,7 @@ a conversation already owned by the CLI.
 ## Install and trust
 
 ```bash
-npm install -g agentbus-cli
+npm install -g @aixyzstudio/agentbus-cli
 agentbus setup --agents codex
 ```
 

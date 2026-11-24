@@ -1,13 +1,13 @@
 # npm packaging
 
 The npm distribution is a launcher plus one prebuilt-binary package per
-platform, so `npm install -g agentbus-cli` never needs a postinstall download
-from GitHub and never needs a Go toolchain.
+platform, so `npm install -g @aixyzstudio/agentbus-cli` never needs a postinstall
+download from GitHub or a Go toolchain.
 
 ```
 npm/
-  cli/                 package agentbus-cli (bin: agentbus, launcher JS)
-  platform/<key>/      package agentbus-cli-<key> (bin/agentbus, git-ignored)
+  cli/                 package @aixyzstudio/agentbus-cli (bin: agentbus, launcher JS)
+  platform/<key>/      package @aixyzstudio/agentbus-cli-<key> (bin/agentbus, git-ignored)
 ```
 
 Supported keys: `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`
@@ -16,13 +16,13 @@ Supported keys: `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`
 `bin/agentbus.js` resolves the binary in this order:
 
 1. `$AGENTBUS_BIN`;
-2. the optional dependency `agentbus-cli-<platform>-<arch>`;
+2. the optional dependency `@aixyzstudio/agentbus-cli-<platform>-<arch>`;
 3. `npm/platform/<key>/bin/agentbus` (development checkout).
 
 Every package version and every `optionalDependencies` entry is rewritten by
 `scripts/build-release.sh` from `VERSION` (default: `npm/cli/package.json`).
-Do not publish by hand without running that script first; the platform
-packages must be published **before** `agentbus-cli`.
+Do not publish by hand without running that script first; the scoped platform
+packages must be published **before** `@aixyzstudio/agentbus-cli`.
 
 Local verification:
 
