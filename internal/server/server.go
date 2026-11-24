@@ -4,6 +4,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/windviki/agentbus/internal/bus"
 	"github.com/windviki/agentbus/internal/client"
+	"github.com/windviki/agentbus/internal/delivery"
 	"github.com/windviki/agentbus/internal/proto"
 	"github.com/windviki/agentbus/internal/web"
 )
@@ -30,6 +32,9 @@ type Server struct {
 	saveMu    sync.Mutex
 	saving    bool
 	webAddr   string
+	flushMu   sync.Mutex
+	retryMu   sync.Mutex
+	retryAt   map[string]time.Time
 }
 
 // Run serves in the foreground until SIGTERM/SIGINT or a shutdown op.
@@ -40,7 +45,7 @@ func Run(home string) error {
 	if client.Alive(home) {
 		return fmt.Errorf("agentbus daemon already running (%s)", client.SocketPath(home))
 	}
-	s := &Server{home: home, started: time.Now(), statePath: filepath.Join(home, "state.json")}
+	s := &Server{home: home, started: time.Now(), statePath: filepath.Join(home, "state.json"), retryAt: map[string]time.Time{}}
 	s.b = bus.New(bus.DefaultOptions())
 	s.loadState()
 
@@ -55,7 +60,10 @@ func Run(home string) error {
 	_ = os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600)
 
 	// Web dashboard + A2A boundary on loopback (disable: AGENTBUS_WEB=0).
-	s.webAddr = web.Start(s.b, Version, s.started, s.save)
+	s.webAddr = web.Start(s.b, Version, s.started, func() {
+		s.save()
+		s.triggerFlush()
+	})
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
@@ -73,6 +81,13 @@ func Run(home string) error {
 		for range t.C {
 			s.b.Reap()
 			s.saveNow()
+		}
+	}()
+	go func() {
+		t := time.NewTicker(500 * time.Millisecond)
+		defer t.Stop()
+		for range t.C {
+			s.flushNative()
 		}
 	}()
 
@@ -141,6 +156,11 @@ func (s *Server) dispatch(r *proto.Request) (proto.Response, bool) {
 			return errResp(err), false
 		}
 		s.b.SetRepo(r.ID, r.Repo)
+		if r.Delivery != nil {
+			if err := s.b.SetDelivery(r.ID, r.Delivery.Bus()); err != nil {
+				return errResp(err), false
+			}
+		}
 		// A hook may report the turn state with the same round-trip; a
 		// SessionStart registers the session as idle until its first prompt.
 		if r.State != "" {
@@ -151,6 +171,7 @@ func (s *Server) dispatch(r *proto.Request) (proto.Response, bool) {
 		resp.Name, resp.RenamedFrom, resp.Agent = sess.Name, renamed, sess.Agent
 		resp.Sessions = others(s.b.Who(), sess.Name)
 		s.save()
+		s.triggerFlush()
 	case "announce":
 		sess, err := s.b.Announce(r.ID, r.Status)
 		if err != nil {
@@ -174,6 +195,7 @@ func (s *Server) dispatch(r *proto.Request) (proto.Response, bool) {
 		}
 		resp.MsgID, resp.Recipients, resp.Dup = m.ID, n, dup
 		s.save()
+		s.triggerFlush()
 	case "ask":
 		// request + wait-for-reply: send kind=request, then long-wait for the
 		// first message the peer sends back to us (taken from the inbox so it
@@ -190,11 +212,15 @@ func (s *Server) dispatch(r *proto.Request) (proto.Response, bool) {
 			return errResp(err), false
 		}
 		resp.MsgID = m.ID
-		reply, got, _ := s.b.TakeFrom(r.ID, m.To, time.Duration(r.WaitMs)*time.Millisecond)
-		if got {
-			resp.Messages = []bus.Msg{reply}
-		}
 		s.save()
+		s.triggerFlush()
+		if r.WaitMs > 0 {
+			reply, got, _ := s.b.TakeReply(r.ID, m.To, m.ID, time.Duration(r.WaitMs)*time.Millisecond)
+			if got {
+				resp.Messages = []bus.Msg{reply}
+			}
+			s.save()
+		}
 	case "reply":
 		// Answer the most recent delivered peer message (kind=reply with
 		// replyTo pointing at it), so agents can reply without bookkeeping
@@ -216,10 +242,17 @@ func (s *Server) dispatch(r *proto.Request) (proto.Response, bool) {
 		}
 		resp.MsgID, resp.Peer = m.ID, last.From
 		s.save()
+		s.triggerFlush()
 	case "poll":
 		ack := true
 		if r.Ack != nil {
 			ack = *r.Ack
+		}
+		if r.Delivery != nil {
+			if err := s.b.SetDelivery(r.ID, r.Delivery.Bus()); err != nil {
+				return errResp(err), false
+			}
+			s.triggerFlush()
 		}
 		// Hooks piggyback the turn state on every poll (the Stop hook says
 		// "idle", the prompt/tool hooks say "working"), so presence and
@@ -229,14 +262,28 @@ func (s *Server) dispatch(r *proto.Request) (proto.Response, bool) {
 				return errResp(err), false
 			}
 		}
-		msgs, name, err := s.b.Poll(r.ID, ack, time.Duration(r.WaitMs)*time.Millisecond)
+		msgs, name, err := s.b.PollWithOptions(r.ID, bus.PollOptions{
+			Ack: ack, Wait: time.Duration(r.WaitMs) * time.Millisecond,
+			WakeOnly: r.WakeOnly, WakePolicy: r.WakePolicy, ActiveOnly: r.ActiveOnly, Claim: r.Claim, Driver: r.Driver,
+		})
 		if err != nil {
 			return errResp(err), false
 		}
 		resp.Messages, resp.Name = msgs, name
-		if ack && len(msgs) > 0 {
+		if (ack || r.Claim != "") && len(msgs) > 0 {
 			s.save()
 		}
+	case "complete":
+		var deliveryErr error
+		if r.Error != "" {
+			deliveryErr = fmt.Errorf("%s", r.Error)
+		}
+		if err := s.b.CompleteClaim(r.ID, r.Claim, r.Driver, deliveryErr); err != nil {
+			return errResp(err), false
+		}
+		s.save()
+	case "receipt":
+		resp.Receipts = s.b.Receipts(r.MsgID)
 	case "state":
 		// Explicit state report for harnesses that do not run `agentbus hook`
 		// (MCP-only clients, integration scripts).
@@ -271,6 +318,56 @@ func (s *Server) dispatch(r *proto.Request) (proto.Response, bool) {
 		return errResp(fmt.Errorf("unknown op %q", r.Op)), false
 	}
 	return resp, false
+}
+
+func (s *Server) triggerFlush() {
+	go s.flushNative()
+}
+
+func (s *Server) flushNative() {
+	if !s.flushMu.TryLock() {
+		return
+	}
+	defer s.flushMu.Unlock()
+	for _, sess := range s.b.Who() {
+		if !delivery.CanPush(sess) || s.nativeRetryBlocked(sess.ID) {
+			continue
+		}
+		owner := fmt.Sprintf("native-%d", time.Now().UnixNano())
+		msgs, _, err := s.b.PollWithOptions(sess.ID, bus.PollOptions{
+			Claim: owner, Driver: sess.Delivery.Driver, WakeOnly: !sess.Working, WakePolicy: sess.Delivery.Wake,
+		})
+		if err != nil || len(msgs) == 0 {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		pushErr := delivery.Push(ctx, sess, msgs)
+		cancel()
+		if completeErr := s.b.CompleteClaim(sess.ID, owner, sess.Delivery.Driver, pushErr); completeErr != nil {
+			continue
+		}
+		s.setNativeRetry(sess.ID, pushErr)
+		s.save()
+	}
+}
+
+func (s *Server) nativeRetryBlocked(id string) bool {
+	s.retryMu.Lock()
+	defer s.retryMu.Unlock()
+	return s.retryAt[id].After(time.Now())
+}
+
+func (s *Server) setNativeRetry(id string, err error) {
+	s.retryMu.Lock()
+	defer s.retryMu.Unlock()
+	if s.retryAt == nil {
+		s.retryAt = map[string]time.Time{}
+	}
+	if err == nil {
+		delete(s.retryAt, id)
+		return
+	}
+	s.retryAt[id] = time.Now().Add(2 * time.Second)
 }
 
 func others(all []bus.Session, exclude string) []bus.Session {

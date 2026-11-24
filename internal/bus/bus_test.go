@@ -394,7 +394,7 @@ func TestDeleteUnreadMessage(t *testing.T) {
 		t.Fatal("unread map should be empty after delete")
 	}
 
-	// Once delivered, the message is read history and must not be deleted.
+	// Once accepted, the message is history and must not be deleted.
 	read, _, _, err := b.Send("alice", "bob", "read once", KindRequest, "")
 	if err != nil {
 		t.Fatal(err)

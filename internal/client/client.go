@@ -43,8 +43,16 @@ func Call(home string, autoStart bool, req proto.Request) (proto.Response, error
 		return proto.Response{}, fmt.Errorf("daemon not running (%s): %w", SocketPath(home), err)
 	}
 	defer c.Close()
-	// Generous deadline: covers long-poll waits (agentbus inbox --wait 120).
-	c.SetDeadline(time.Now().Add(3 * time.Minute))
+	// Generous deadline: covers long-poll waits, including async harness
+	// watchers that wait for a whole active turn.
+	deadline := 3 * time.Minute
+	if req.WaitMs > 0 {
+		wait := time.Duration(req.WaitMs)*time.Millisecond + 15*time.Second
+		if wait > deadline {
+			deadline = wait
+		}
+	}
+	c.SetDeadline(time.Now().Add(deadline))
 	if err := json.NewEncoder(c).Encode(&req); err != nil {
 		return proto.Response{}, fmt.Errorf("write: %w", err)
 	}

@@ -1,6 +1,6 @@
 // Package mcp implements a minimal stdio MCP server exposing agentbus tools.
-// This is the deep-integration path for harnesses that support MCP tools but
-// have no hook system (kimi, dsh, ...). Session identity is derived from the
+// This is the fallback path for harnesses that support MCP tools but have no
+// lifecycle hook system. Session identity is derived from the
 // owning agent process via /proc ancestry, so every tool call from the same
 // agent addresses the same mailbox.
 package mcp
@@ -33,7 +33,7 @@ var tools = []toolDef{
 		Name: "agentbus_who",
 		Description: "List AI agent sessions that are working right now (name, agent CLI, what they are doing, worktree, how long). " +
 			"Run this before starting non-trivial work to spot overlapping parallel sessions. " +
-			"Finished/idle sessions are hidden by default; pass all=true to list them too (an idle dsh session can be woken with a directed request).",
+			"Finished/idle sessions are hidden by default; pass all=true to list them too (sessions with native push can be woken with a directed request).",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -90,6 +90,17 @@ var tools = []toolDef{
 				"peek":         map[string]any{"type": "boolean", "description": "read without marking delivered"},
 				"wait_seconds": map[string]any{"type": "number"},
 			},
+		},
+	},
+	{
+		Name:        "agentbus_receipt",
+		Description: "Inspect per-recipient delivery receipts: queued, pushing, or accepted by the Harness. Accepted does not mean the model processed the message.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"message_id": map[string]any{"type": "string"},
+			},
+			"required": []string{"message_id"},
 		},
 	},
 }
@@ -259,7 +270,7 @@ func callTool(home string, params json.RawMessage) (string, bool) {
 			b.WriteByte('\n')
 		}
 		if !all && idle > 0 {
-			fmt.Fprintf(&b, "%d idle session(s) hidden (finished or waiting); pass all=true to list — a directed request wakes an idle dsh session\n", idle)
+			fmt.Fprintf(&b, "%d idle session(s) hidden (finished or waiting); pass all=true to list — a directed request wakes sessions with native push\n", idle)
 		}
 		b.WriteString("message: agentbus_send(to=<name>, body=...) or agentbus_ask(to=<name>, body=...)")
 		return b.String(), false
@@ -295,7 +306,7 @@ func callTool(home string, params json.RawMessage) (string, bool) {
 		if resp.Dup {
 			return "duplicate suppressed (identical message sent moments ago)", false
 		}
-		return fmt.Sprintf("delivered to '%s' (%d recipient(s))", str("to"), resp.Recipients), false
+		return fmt.Sprintf("message %s queued for '%s' (%d recipient(s)); inspect acceptance with agentbus receipt", resp.MsgID, str("to"), resp.Recipients), false
 
 	case "agentbus_ask":
 		key, err := sessionID(home)
@@ -313,10 +324,35 @@ func callTool(home string, params json.RawMessage) (string, bool) {
 			return resp.Error, true
 		}
 		if len(resp.Messages) == 0 {
+			if num("wait_seconds", 120) == 0 {
+				return fmt.Sprintf("request %s queued for '%s'; the reply will arrive asynchronously", resp.MsgID, str("to")), false
+			}
 			return fmt.Sprintf("no reply from '%s' before timeout — proceed and re-check later", str("to")), false
 		}
 		m := resp.Messages[0]
 		return "reply from " + m.From + ": " + m.Body, false
+
+	case "agentbus_receipt":
+		resp, err := client.Call(home, true, proto.Request{Op: "receipt", MsgID: str("message_id")})
+		if err != nil {
+			return err.Error(), true
+		}
+		if !resp.Ok {
+			return resp.Error, true
+		}
+		if len(resp.Receipts) == 0 {
+			return "no delivery receipt for " + str("message_id"), true
+		}
+		var b strings.Builder
+		for name, r := range resp.Receipts {
+			fmt.Fprintf(&b, "%s: %s (%s)", name, r.State, r.Driver)
+			if r.Error != "" {
+				b.WriteString(" — " + r.Error)
+			}
+			b.WriteByte('\n')
+		}
+		b.WriteString("accepted means the Harness accepted transport, not that the model processed the message")
+		return b.String(), false
 
 	case "agentbus_inbox":
 		key, err := sessionID(home)

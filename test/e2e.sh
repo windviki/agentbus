@@ -172,6 +172,15 @@ out="$(hook UserPromptSubmit e2e-b)"
 [ -z "$out" ]
 pass "no double delivery of the reply"
 
+say "ask --wait 0 returns after queueing and the answer arrives asynchronously"
+out="$("$BIN" ask --session sid:e2e-b --wait 0 "$nameA" "non-blocking status check")"
+grep -q 'queued for' <<<"$out"
+"$BIN" reply --session sid:e2e-a --to "$nameB" "async answer" >/dev/null
+out="$(hook UserPromptSubmit e2e-b)"
+grep -q 'async answer' <<<"$out"
+grep -q '\[reply\]' <<<"$out"
+pass "non-blocking ask keeps the original request correlated"
+
 say "notify: one-way notice delivered at natural boundary"
 "$BIN" notify --session sid:e2e-a "$nameB" "running full build in main wt ~10min" >/dev/null
 out="$(hook UserPromptSubmit e2e-b)"
@@ -210,6 +219,7 @@ grep -q '"bob"' <<<"$state"
 grep -q 'full build in main wt' <<<"$state"
 grep -q '"recipients":' <<<"$state"
 grep -q '"unread":' <<<"$state"
+grep -q '"receipts":' <<<"$state"
 resp="$(curl -fsS -X POST "http://127.0.0.1:$AGENTBUS_WEB_PORT/api/send" \
   -d '{"to":"bob","body":"web human says: wrap up auth today","kind":"chat","from":"user-web"}')"
 grep -q '"ok":true' <<<"$resp"
@@ -259,6 +269,8 @@ grep -q '最新消息在最下方' <<<"$page"
 grep -q 'data-open' <<<"$page"
 grep -q 'scrollBottom' <<<"$page"
 grep -q 'deleteMessage' <<<"$page"
+grep -q 'deliveryState' <<<"$page"
+grep -q 'Harness 已接收' <<<"$page"
 if grep -q 'trafPanel' <<<"$page"; then fail "the duplicate traffic log is still in the page"; fi
 pass "index.html embedded, relative URLs, chat feed + roster + avatars, no duplicate log"
 
@@ -336,6 +348,10 @@ pass "human message delivered and framed as human"
 out="$("$BIN" log -n 8)"
 grep -q "$nameB→user: ack: human message received" <<<"$out"
 pass "agent can reply to the human pseudo-recipient"
+
+say "native Claude/Kimi push and Codex async delivery (separate daemon)"
+AGENTBUS_BIN="$BIN" node "$ROOT/test/native-push.mjs"
+pass "native transports and async watcher work through the real binary"
 
 "$BIN" stop >/dev/null
 printf '\nALL E2E TESTS PASSED\n'

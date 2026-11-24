@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -55,6 +56,8 @@ func run(args []string) int {
 		return cmdAnnounce(rest)
 	case "send":
 		return cmdSend(rest)
+	case "receipt":
+		return cmdReceipt(rest)
 	case "ask":
 		return cmdAsk(rest)
 	case "reply":
@@ -101,9 +104,11 @@ Usage:
   agentbus state working|idle                # report this session's turn state (hooks do
                                              # this automatically at turn boundaries)
   agentbus announce "fixing auth in wt-auth" # publish your status
-  agentbus send <name|all> "message"         # message a peer / broadcast
+  agentbus send <name|all> "message"         # queue a peer / broadcast message
                                              #   --kind chat|request|reply|notice|urgent
+  agentbus receipt <message-id> [--json]     # per-recipient delivery acceptance
   agentbus ask <name> "question" [--wait 120] # send a request and wait for the reply
+                                             #   --wait 0 returns immediately
   agentbus reply "message" [--to <name>]     # answer the latest peer message
   agentbus notify <name|all> "information"   # one-way notice (no reply expected)
   agentbus primer                            # print the session contract a harness
@@ -112,17 +117,18 @@ Usage:
   agentbus leave                             # leave the bus (automatic on exit anyway)
   agentbus log [-n 20]                       # recent bus traffic (all sessions)
   agentbus mcp                               # run as a stdio MCP server (tools for
-                                             # harnesses without hooks: kimi/dsh/...)
+                                             # harnesses without lifecycle hooks)
   agentbus setup [--yes] [--dry-run]          # detect installed agents, then wire the
                                              # ones you pick (hooks/plugin/skill).
-                                             # --agents claude,zcode,kimi,dsh
+                                             # --agents claude,zcode,kimi,dsh,codex
                                              # --uninstall removes agentbus wiring
   agentbus status | doctor                   # daemon state / installation checks
   agentbus serve [--detach] | stop           # daemon lifecycle (auto-spawns anyway)
 
 Communication patterns: send (direct or broadcast via "all"), ask (request-
-reply, blocks for the answer), notify (one-way), urgent kind (wakes an idle
-session via the Stop hook — the only kind allowed to interrupt).
+reply; --wait 0 is asynchronous), notify (one-way), urgent kind (wake for real
+interruptions). Native push delivers during active turns where supported;
+direct requests and urgent messages may wake idle sessions.
 
 Session identity: taken from $AGENTBUS_SESSION_ID / $CLAUDE_SESSION_ID / the
 hook JSON session_id, or from the owning agent process. Pass --session <key>
@@ -132,6 +138,8 @@ Env: AGENTBUS_HOME (default ~/.agentbus), AGENTBUS_AGENT (force agent label),
      AGENTBUS_NAME (preferred name for hook registration),
      AGENTBUS_PRIMER=0 (omit the session contract from the join summary),
      AGENTBUS_WAKE (default request = urgent + direct request; urgent; all),
+     AGENTBUS_PUSH=0 (disable native push), AGENTBUS_KIMI_URL / AGENTBUS_KIMI_TOKEN
+     (optional loopback Kimi Server API override),
      AGENTBUS_WEB_PORT (dashboard port, default 8787), AGENTBUS_WEB=0 (disable),
      AGENTBUS_WEB_TOKEN (require bearer token on the dashboard/A2A HTTP API).
 
@@ -436,17 +444,37 @@ func kimiFirstRoster(home, key, cwd string) {
 	_ = os.WriteFile(marker, []byte("1\n"), 0o600)
 }
 
+type hookInput struct {
+	EventName  string `json:"hook_event_name"`
+	SessionID  string `json:"session_id"`
+	Cwd        string `json:"cwd"`
+	ClientType string `json:"client_type"`
+	AgentState string `json:"agentbus_state"`
+	WaitMs     int    `json:"wait_ms"`
+}
+
+func nativeDeliveryForHook(h hookInput) *proto.Delivery {
+	if os.Getenv("AGENTBUS_PUSH") == "0" {
+		return nil
+	}
+	if h.ClientType == "kimi_code_cli" {
+		return &proto.Delivery{Driver: "kimi", Address: os.Getenv("AGENTBUS_KIMI_URL"), NativeID: h.SessionID, Wake: wakeMode(), Token: os.Getenv("AGENTBUS_KIMI_TOKEN")}
+	}
+	if address := os.Getenv("CLAUDE_CODE_MESSAGING_SOCKET"); address != "" {
+		return &proto.Delivery{
+			Driver: "claude", Address: address, NativeID: h.SessionID, Wake: wakeMode(),
+			Token: os.Getenv("CLAUDE_CODE_MESSAGING_TOKEN"),
+		}
+	}
+	return nil
+}
+
 // cmdHook is the single hook entrypoint wired into agent configs. It must
 // never break the host session: all failures exit 0 silently (logged to
 // $AGENTBUS_HOME/hook.log).
 func cmdHook(args []string) int {
 	in, _ := io.ReadAll(os.Stdin)
-	var h struct {
-		EventName  string `json:"hook_event_name"`
-		SessionID  string `json:"session_id"`
-		Cwd        string `json:"cwd"`
-		ClientType string `json:"client_type"`
-	}
+	var h hookInput
 	_ = json.Unmarshal(in, &h)
 	home := busHome()
 	key := hookSessionKey(h.SessionID)
@@ -458,6 +486,18 @@ func cmdHook(args []string) int {
 	// appended to the model context, and Stop blocks by exiting 2 with the
 	// reason on stderr (no JSON envelope).
 	kimi := h.ClientType == "kimi_code_cli"
+	native := nativeDeliveryForHook(h)
+	asyncWatch := len(args) == 1 && args[0] == "--async-watch"
+	if asyncWatch {
+		if h.EventName != "UserPromptSubmit" {
+			return 0
+		}
+		msgs := pollForHook(home, key, bus.StateWorking, hookPollOptions{waitMs: 540000, activeOnly: true})
+		if len(msgs) > 0 {
+			fmt.Print(hookContextJSON(h.EventName, incomingText(msgs)))
+		}
+		return 0
+	}
 	switch h.EventName {
 	case "SessionStart":
 		pid, pidStart, label := detectAgent()
@@ -467,7 +507,7 @@ func cmdHook(args []string) int {
 		}
 		resp, err := client.Call(home, true, proto.Request{
 			Op: "register", ID: key, Want: os.Getenv("AGENTBUS_NAME"), Agent: label, Cwd: cwd,
-			Repo: gitRepo(cwd), Branch: gitBranch(cwd), Pid: pid, PidStart: pidStart,
+			Repo: gitRepo(cwd), Branch: gitBranch(cwd), Pid: pid, PidStart: pidStart, Delivery: native,
 			// A freshly started session sits at the prompt until its first
 			// prompt arrives; that is idle, not "in progress".
 			State: bus.StateIdle,
@@ -483,23 +523,54 @@ func cmdHook(args []string) int {
 		if kimi {
 			kimiFirstRoster(home, key, h.Cwd)
 		}
-		if msgs := pollForHook(home, key, bus.StateWorking); len(msgs) > 0 {
+		if msgs := pollForHook(home, key, bus.StateWorking, hookPollOptions{delivery: native}); len(msgs) > 0 {
 			if kimi {
 				fmt.Print(incomingText(msgs))
 			} else {
 				fmt.Print(hookContextJSON(h.EventName, incomingText(msgs)))
 			}
 		}
-	case "PostToolUse", "PostToolUseFailure":
-		// Kimi treats these as observation-only: stdout is ignored, so polling
-		// here would consume messages without showing them. Leave mail queued
-		// for the next prompt, the Stop wake, or an explicit `agentbus inbox`.
+	case "PreToolUse", "PostToolUse", "PostToolUseFailure", "PostToolBatch":
+		// Kimi treats tool events as observation-only: refresh presence and the
+		// native delivery endpoint without consuming mail that stdout cannot show.
 		if kimi {
+			peek := false
+			_, _ = client.Call(home, true, proto.Request{Op: "poll", ID: key, Ack: &peek, State: bus.StateWorking, Delivery: native})
 			return 0
 		}
-		if msgs := pollForHook(home, key, bus.StateWorking); len(msgs) > 0 {
+		if msgs := pollForHook(home, key, bus.StateWorking, hookPollOptions{delivery: native}); len(msgs) > 0 {
 			fmt.Print(hookContextJSON(h.EventName, incomingText(msgs)))
 		}
+	case "TurnStarted":
+		peek := false
+		_, _ = client.Call(home, true, proto.Request{Op: "poll", ID: key, Ack: &peek, State: bus.StateWorking, Delivery: native})
+	case "SessionHeartbeat":
+		peek := false
+		_, _ = client.Call(home, true, proto.Request{Op: "poll", ID: key, Ack: &peek, Delivery: native})
+	case "Watch":
+		state := h.AgentState
+		if state != bus.StateIdle {
+			state = bus.StateWorking
+		}
+		waitMs := h.WaitMs
+		if waitMs <= 0 || waitMs > 55000 {
+			waitMs = 30000
+		}
+		take := true
+		resp, err := client.Call(home, true, proto.Request{
+			Op: "poll", ID: key, Ack: &take, State: state, WaitMs: waitMs, WakeOnly: state == bus.StateIdle, WakePolicy: wakeMode(), ActiveOnly: state == bus.StateWorking,
+		})
+		if err != nil || !resp.Ok || len(resp.Messages) == 0 {
+			return 0
+		}
+		text := incomingText(resp.Messages)
+		if state == bus.StateIdle {
+			text = stopReason(resp.Messages)
+		}
+		fmt.Print(stopBlockJSON(text))
+	case "StopFailure", "Interrupt":
+		peek := false
+		_, _ = client.Call(home, true, proto.Request{Op: "poll", ID: key, Ack: &peek, State: bus.StateIdle, Delivery: native})
 	case "Stop":
 		// The turn is ending: report idle first (a Stop from the DSH idle
 		// poller re-asserts it every few seconds), then apply the delivery
@@ -509,7 +580,7 @@ func cmdHook(args []string) int {
 		// AGENTBUS_WAKE=all wakes on anything. Peek first so messages that do
 		// not qualify stay queued for the next natural boundary.
 		peek := false
-		resp, err := client.Call(home, true, proto.Request{Op: "poll", ID: key, Ack: &peek, State: bus.StateIdle})
+		resp, err := client.Call(home, true, proto.Request{Op: "poll", ID: key, Ack: &peek, State: bus.StateIdle, Delivery: native})
 		if err != nil || !resp.Ok || len(resp.Messages) == 0 {
 			return 0
 		}
@@ -517,7 +588,7 @@ func cmdHook(args []string) int {
 			return 0
 		}
 		take := true
-		resp, err = client.Call(home, true, proto.Request{Op: "poll", ID: key, Ack: &take})
+		resp, err = client.Call(home, true, proto.Request{Op: "poll", ID: key, Ack: &take, Delivery: native})
 		if err != nil || !resp.Ok || len(resp.Messages) == 0 {
 			return 0
 		}
@@ -563,10 +634,25 @@ func shouldWakeIdle(msgs []bus.Msg, name string) bool {
 	}
 }
 
+type hookPollOptions struct {
+	delivery   *proto.Delivery
+	waitMs     int
+	wakeOnly   bool
+	activeOnly bool
+}
+
 // pollForHook polls once and reports the turn state in the same round-trip;
 // if the daemon forgot us (state wiped), it silently re-registers and retries.
-func pollForHook(home, key, state string) []bus.Msg {
-	resp, err := client.Call(home, true, proto.Request{Op: "poll", ID: key, State: state})
+func pollForHook(home, key, state string, options ...hookPollOptions) []bus.Msg {
+	var opt hookPollOptions
+	if len(options) > 0 {
+		opt = options[0]
+	}
+	req := proto.Request{
+		Op: "poll", ID: key, State: state, Delivery: opt.delivery,
+		WaitMs: opt.waitMs, WakeOnly: opt.wakeOnly, ActiveOnly: opt.activeOnly,
+	}
+	resp, err := client.Call(home, true, req)
 	if err != nil {
 		hookFail(home, err, resp)
 		return nil
@@ -576,8 +662,8 @@ func pollForHook(home, key, state string) []bus.Msg {
 	}
 	if strings.Contains(resp.Error, "unknown session") {
 		pid, pidStart, label := detectAgent()
-		if reg, err2 := client.Call(home, true, proto.Request{Op: "register", ID: key, Agent: label, Pid: pid, PidStart: pidStart, State: state}); err2 == nil && reg.Ok {
-			if resp, err = client.Call(home, true, proto.Request{Op: "poll", ID: key}); err == nil && resp.Ok {
+		if reg, err2 := client.Call(home, true, proto.Request{Op: "register", ID: key, Agent: label, Pid: pid, PidStart: pidStart, State: state, Delivery: opt.delivery}); err2 == nil && reg.Ok {
+			if resp, err = client.Call(home, true, req); err == nil && resp.Ok {
 				return resp.Messages
 			}
 		}
@@ -609,7 +695,7 @@ func hookFail(home string, err error, resp proto.Response) {
 func cmdRegister(args []string) int {
 	fs := newFlagSet("register")
 	name := fs.String("name", "", "requested session name (auto-generated when omitted)")
-	agent := fs.String("agent", "", "agent label, e.g. claude-code, zcode, kimi, dsh")
+	agent := fs.String("agent", "", "agent label, e.g. claude-code, zcode, kimi, dsh, codex")
 	session := fs.String("session", "", "session key override")
 	cwdF := fs.String("cwd", "", "working directory (default: $PWD)")
 	pidF := fs.Int("pid", 0, "override agent pid (testing)")
@@ -703,7 +789,7 @@ func cmdWho(args []string) int {
 	switch {
 	case *all:
 		if idle > 0 {
-			fmt.Println("[agentbus] idle sessions are not working now; a directed request wakes a dsh idle session")
+			fmt.Println("[agentbus] idle sessions are not working now; a directed request wakes sessions with native push")
 		}
 	case working == 0:
 		fmt.Printf("[agentbus] no session is working right now (%d idle, not a conflict) — agentbus who --all to list\n", idle)
@@ -869,6 +955,7 @@ func cmdSend(args []string) int {
 	kind := fs.String("kind", "chat", "chat|request|reply|notice|urgent")
 	kindAlias := fs.String("type", "", "alias for --kind")
 	replyTo := fs.String("reply-to", "", "messageId this replies to")
+	asJSON := fs.Bool("json", false, "")
 	if err := fs.Parse(args); err != nil {
 		return fail("bad flags: %v", err)
 	}
@@ -895,19 +982,65 @@ func cmdSend(args []string) int {
 	if !resp.Ok {
 		return fail("%s", resp.Error)
 	}
+	if *asJSON {
+		printJSON(resp)
+		return 0
+	}
 	switch {
 	case resp.Dup:
 		fmt.Println("[agentbus] identical message sent moments ago — suppressed")
 	case to == "all" || to == "#all":
 		if strings.EqualFold(*kind, "request") {
-			fmt.Printf("[agentbus] broadcast request delivered to %d session(s) — replies are optional and it will not wake idle sessions\n", resp.Recipients)
+			fmt.Printf("[agentbus] broadcast request queued for %d session(s) — replies are optional and it will not wake idle sessions\n", resp.Recipients)
 		} else {
-			fmt.Printf("[agentbus] broadcast delivered to %d session(s)\n", resp.Recipients)
+			fmt.Printf("[agentbus] broadcast queued for %d session(s)\n", resp.Recipients)
 		}
 	case strings.EqualFold(*kind, "request"):
-		fmt.Printf("[agentbus] request delivered to '%s' (a reply is expected; an idle peer is woken)\n", strings.ToLower(to))
+		fmt.Printf("[agentbus] request %s queued for '%s' (a reply is expected; native push wakes an idle peer when available)\n", resp.MsgID, strings.ToLower(to))
 	default:
-		fmt.Printf("[agentbus] delivered to '%s'\n", strings.ToLower(to))
+		fmt.Printf("[agentbus] message %s queued for '%s'\n", resp.MsgID, strings.ToLower(to))
+	}
+	return 0
+}
+
+func cmdReceipt(args []string) int {
+	fs := newFlagSet("receipt")
+	asJSON := fs.Bool("json", false, "")
+	if err := fs.Parse(args); err != nil {
+		return fail("bad flags: %v", err)
+	}
+	if fs.NArg() != 1 {
+		return fail("usage: agentbus receipt <message-id> [--json]")
+	}
+	resp, err := client.Call(busHome(), true, proto.Request{Op: "receipt", MsgID: fs.Arg(0)})
+	if err != nil {
+		return fail("%v", err)
+	}
+	if !resp.Ok {
+		return fail("%s", resp.Error)
+	}
+	if *asJSON {
+		printJSON(resp)
+		return 0
+	}
+	if len(resp.Receipts) == 0 {
+		return fail("no delivery receipt for %s", fs.Arg(0))
+	}
+	names := make([]string, 0, len(resp.Receipts))
+	for name := range resp.Receipts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		r := resp.Receipts[name]
+		fmt.Printf("%s\t%s\t%s", name, r.State, time.Unix(r.UpdatedAt, 0).Format(time.RFC3339))
+		if r.Driver != "" {
+			fmt.Printf("\t%s", r.Driver)
+		}
+		if r.Error != "" {
+			fmt.Printf("\t%s", r.Error)
+		}
+		fmt.Println()
 	}
 	return 0
 }
@@ -923,6 +1056,9 @@ func cmdAsk(args []string) int {
 	}
 	if fs.NArg() < 2 {
 		return fail("usage: agentbus ask <name> \"question\"")
+	}
+	if *waitS < 0 {
+		return fail("--wait must be >= 0")
 	}
 	key := sessionKey(*session)
 	if key == "" {
@@ -942,7 +1078,11 @@ func cmdAsk(args []string) int {
 		return fail("%s", resp.Error)
 	}
 	if len(resp.Messages) == 0 {
-		fmt.Printf("[agentbus] no reply from '%s' within %ds — the request stays queued; a directed request wakes an idle peer, so it may be busy or not running hooks. Check `agentbus who`, then carry on and read any late answer with `agentbus inbox --peek`.\n",
+		if *waitS == 0 {
+			fmt.Printf("[agentbus] request %s queued for '%s'; the reply will arrive asynchronously (agentbus inbox --peek, or receipt %s)\n", resp.MsgID, strings.ToLower(to), resp.MsgID)
+			return 0
+		}
+		fmt.Printf("[agentbus] no reply from '%s' within %ds — the request stays queued; a directed request wakes an idle peer when its harness supports push, so it may be busy or not running hooks. Check `agentbus who`, then carry on and read any late answer with `agentbus inbox --peek`.\n",
 			strings.ToLower(to), *waitS)
 		return 1
 	}
@@ -1018,12 +1158,12 @@ func cmdNotify(args []string) int {
 	if !resp.Ok {
 		return fail("%s", resp.Error)
 	}
-	fmt.Printf("[agentbus] notice delivered (%d session(s))\n", resp.Recipients)
+	fmt.Printf("[agentbus] notice queued for %d session(s)\n", resp.Recipients)
 	return 0
 }
 
-// cmdMcp runs agentbus as a stdio MCP server — the deep-integration path for
-// harnesses that support MCP tools but not hooks (kimi, dsh, ...).
+// cmdMcp runs agentbus as a stdio MCP server for harnesses without lifecycle
+// hooks or native delivery.
 func cmdMcp(args []string) int {
 	if err := mcp.Run(); err != nil {
 		return fail("mcp: %v", err)

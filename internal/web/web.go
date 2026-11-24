@@ -101,14 +101,15 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 type stateDTO struct {
-	OK       bool                `json:"ok"`
-	Version  string              `json:"version"`
-	Uptime   int64               `json:"uptime"`
-	Now      int64               `json:"now"`
-	WebIdent string              `json:"web_identity"`
-	Sessions []bus.Session       `json:"sessions"`
-	Messages []bus.Msg           `json:"messages"`
-	Unread   map[string][]string `json:"unread,omitempty"`
+	OK       bool                              `json:"ok"`
+	Version  string                            `json:"version"`
+	Uptime   int64                             `json:"uptime"`
+	Now      int64                             `json:"now"`
+	WebIdent string                            `json:"web_identity"`
+	Sessions []bus.Session                     `json:"sessions"`
+	Messages []bus.Msg                         `json:"messages"`
+	Unread   map[string][]string               `json:"unread,omitempty"`
+	Receipts map[string]map[string]bus.Receipt `json:"receipts,omitempty"`
 }
 
 func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
@@ -125,6 +126,7 @@ func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
 		Sessions: s.b.Who(),
 		Messages: s.b.Log(100),
 		Unread:   s.b.UnreadByMessage(),
+		Receipts: s.b.ReceiptsByMessage(),
 	})
 }
 
@@ -312,6 +314,9 @@ func (s *server) handleA2A(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		rpcErr(-32000, err.Error())
 		return
+	}
+	if s.onChange != nil {
+		s.onChange()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"jsonrpc": "2.0",

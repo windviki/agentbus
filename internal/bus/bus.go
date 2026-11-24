@@ -31,12 +31,41 @@ const (
 	RecentCap  = 300
 	NameMax    = 32
 	dupWindowS = 60
+	claimTTL   = 30
 	pollTick   = 50 * time.Millisecond
 )
 
 // Msg is one message on the bus. The JSON field names follow the A2A message
 // envelope where sensible (messageId, replyTo, kind) so the HTTP/A2A boundary
 // can map losslessly.
+type WorkContext struct {
+	Cwd    string `json:"cwd,omitempty"`
+	Repo   string `json:"repo,omitempty"`
+	Branch string `json:"branch,omitempty"`
+	Status string `json:"status,omitempty"`
+}
+
+type Delivery struct {
+	Driver   string `json:"driver"`
+	Address  string `json:"address,omitempty"`
+	NativeID string `json:"native_id,omitempty"`
+	Wake     string `json:"wake,omitempty"`
+	Token    string `json:"-"`
+}
+
+type Receipt struct {
+	State     string `json:"state"`
+	Driver    string `json:"driver,omitempty"`
+	Error     string `json:"error,omitempty"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+const (
+	DeliveryQueued   = "queued"
+	DeliveryPushing  = "pushing"
+	DeliveryAccepted = "accepted"
+)
+
 type Msg struct {
 	ID      string `json:"messageId"`
 	ReplyTo string `json:"replyTo,omitempty"`
@@ -46,9 +75,10 @@ type Msg struct {
 	// Recipients is how many inboxes the message reached (1 for a direct
 	// message or the human side, N for a broadcast). The dashboard uses it to
 	// show the difference between a broadcast and a one-to-one message.
-	Recipients int    `json:"recipients,omitempty"`
-	Body       string `json:"body"`
-	Ts         int64  `json:"ts"`
+	Recipients int          `json:"recipients,omitempty"`
+	Body       string       `json:"body"`
+	Ts         int64        `json:"ts"`
+	Context    *WorkContext `json:"context,omitempty"`
 }
 
 // Message kinds — they drive delivery behaviour (see docs/design.md "delivery
@@ -101,6 +131,17 @@ func WakesIdle(msgs []Msg, name string) bool {
 	return false
 }
 
+func WakesIdlePolicy(msgs []Msg, name, policy string) bool {
+	switch policy {
+	case "all":
+		return len(msgs) > 0
+	case "urgent":
+		return HasUrgent(msgs)
+	default:
+		return WakesIdle(msgs, name)
+	}
+}
+
 // Activity states a harness can report. Presence answers "does this session
 // still exist"; state answers "is it doing something right now". A harness
 // tells the bus at turn boundaries: working while a turn runs, idle once it
@@ -116,15 +157,16 @@ const (
 // ("sid:<uuid>" from a hook session id, or "pid:<pid>:<start>"); Name is the
 // short human/agent-facing handle messages are addressed to.
 type Session struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Agent    string `json:"agent,omitempty"`
-	Cwd      string `json:"cwd,omitempty"`
-	Repo     string `json:"repo,omitempty"` // git common dir (groups worktrees)
-	Branch   string `json:"branch,omitempty"`
-	Pid      int    `json:"pid,omitempty"`
-	PidStart string `json:"pid_start,omitempty"`
-	Status   string `json:"status,omitempty"`
+	ID       string    `json:"id"`
+	Name     string    `json:"name"`
+	Agent    string    `json:"agent,omitempty"`
+	Cwd      string    `json:"cwd,omitempty"`
+	Repo     string    `json:"repo,omitempty"` // git common dir (groups worktrees)
+	Branch   string    `json:"branch,omitempty"`
+	Pid      int       `json:"pid,omitempty"`
+	PidStart string    `json:"pid_start,omitempty"`
+	Status   string    `json:"status,omitempty"`
+	Delivery *Delivery `json:"delivery,omitempty"`
 	// State is the activity state last asserted by the harness ("working" or
 	// "idle"); StateAt is when it entered that state (unchanged by repeated
 	// assertions of the same state, so it means "since").
@@ -170,13 +212,19 @@ func DefaultOptions() Options {
 
 // State is the persistable snapshot of the bus.
 type State struct {
-	Version  int              `json:"version"`
-	Seq      int64            `json:"seq"`
-	Sessions []*Session       `json:"sessions"`
-	Inboxes  map[string][]Msg `json:"inboxes"`
-	Mine     map[string][]Msg `json:"mine,omitempty"`
-	Recent   []Msg            `json:"recent,omitempty"`
-	Tomb     map[string]int64 `json:"tomb"`
+	Version  int                           `json:"version"`
+	Seq      int64                         `json:"seq"`
+	Sessions []*Session                    `json:"sessions"`
+	Inboxes  map[string][]Msg              `json:"inboxes"`
+	Mine     map[string][]Msg              `json:"mine,omitempty"`
+	Recent   []Msg                         `json:"recent,omitempty"`
+	Receipts map[string]map[string]Receipt `json:"receipts,omitempty"`
+	Tomb     map[string]int64              `json:"tomb"`
+}
+
+type claim struct {
+	owner   string
+	expires int64
 }
 
 type dupEntry struct {
@@ -185,17 +233,19 @@ type dupEntry struct {
 }
 
 type Bus struct {
-	mu     sync.Mutex
-	opt    Options
-	sess   map[string]*Session // by ID
-	byName map[string]*Session
-	inbox  map[string][]Msg // by name
-	mine   map[string][]Msg // recently delivered, by name
-	tomb   map[string]int64 // name -> free-at unix
-	recent []Msg
-	rates  map[string][]int64
-	dup    map[string]dupEntry
-	seq    int64
+	mu       sync.Mutex
+	opt      Options
+	sess     map[string]*Session // by ID
+	byName   map[string]*Session
+	inbox    map[string][]Msg // by name
+	mine     map[string][]Msg // recently accepted, by name
+	claims   map[string]map[string]claim
+	receipts map[string]map[string]Receipt
+	tomb     map[string]int64 // name -> free-at unix
+	recent   []Msg
+	rates    map[string][]int64
+	dup      map[string]dupEntry
+	seq      int64
 }
 
 func New(o Options) *Bus {
@@ -224,14 +274,16 @@ func New(o Options) *Bus {
 		o.UnknownActiveSeconds = 10 * 60
 	}
 	return &Bus{
-		opt:    o,
-		sess:   map[string]*Session{},
-		byName: map[string]*Session{},
-		inbox:  map[string][]Msg{},
-		mine:   map[string][]Msg{},
-		tomb:   map[string]int64{},
-		rates:  map[string][]int64{},
-		dup:    map[string]dupEntry{},
+		opt:      o,
+		sess:     map[string]*Session{},
+		byName:   map[string]*Session{},
+		inbox:    map[string][]Msg{},
+		mine:     map[string][]Msg{},
+		claims:   map[string]map[string]claim{},
+		receipts: map[string]map[string]Receipt{},
+		tomb:     map[string]int64{},
+		rates:    map[string][]int64{},
+		dup:      map[string]dupEntry{},
 	}
 }
 
@@ -288,6 +340,21 @@ func (b *Bus) SetRepo(id, repo string) {
 	if s := b.sess[id]; s != nil {
 		s.Repo = repo
 	}
+}
+
+func (b *Bus) SetDelivery(id string, d Delivery) error {
+	if d.Driver == "" {
+		return fmt.Errorf("%w: empty delivery driver", ErrBadInput)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := b.sess[id]
+	if s == nil {
+		return fmt.Errorf("%w: %s", ErrUnknownSession, id)
+	}
+	cp := d
+	s.Delivery = &cp
+	return nil
 }
 
 // NameOf resolves a session id to its display name.
@@ -397,6 +464,9 @@ func (b *Bus) Send(from, to, body, kind, replyTo string) (Msg, int, bool, error)
 	// (for example an urgent interrupt sent from the CLI/dashboard).
 	human := dest == "user" || dest == "user-web"
 	m := Msg{ID: b.nextIDLocked(), ReplyTo: replyTo, From: from, To: dest, Kind: kind, Body: body, Ts: now}
+	if sender := b.byName[from]; sender != nil {
+		m.Context = &WorkContext{Cwd: sender.Cwd, Repo: sender.Repo, Branch: sender.Branch, Status: sender.Status}
+	}
 
 	key := from + "\x00" + dest + "\x00" + body
 	if d, ok := b.dup[key]; ok && now-d.ts < dupWindowS {
@@ -432,11 +502,9 @@ func (b *Bus) Send(from, to, body, kind, replyTo string) (Msg, int, bool, error)
 			q = q[len(q)-InboxCap:]
 		}
 		b.inbox[t.Name] = q
+		b.setReceiptLocked(m.ID, t.Name, Receipt{State: DeliveryQueued, UpdatedAt: now})
 	}
-	b.recent = append(b.recent, m)
-	if len(b.recent) > RecentCap {
-		b.recent = b.recent[len(b.recent)-RecentCap:]
-	}
+	b.appendRecentLocked(m)
 	b.dup[key] = dupEntry{m, now}
 	b.bumpRateLocked(from, now)
 	if human {
@@ -445,10 +513,28 @@ func (b *Bus) Send(from, to, body, kind, replyTo string) (Msg, int, bool, error)
 	return m, len(targets), false, nil
 }
 
+type PollOptions struct {
+	Ack        bool
+	Wait       time.Duration
+	WakeOnly   bool
+	WakePolicy string
+	ActiveOnly bool
+	Claim      string
+	Driver     string
+}
+
 // Poll fetches pending messages for a session. With ack=true they are removed
-// from the inbox (and remembered in "recently delivered"). wait > 0 long-polls.
+// from the inbox (and remembered as accepted). wait > 0 long-polls.
 func (b *Bus) Poll(id string, ack bool, wait time.Duration) ([]Msg, string, error) {
-	deadline := b.opt.Now().Add(wait)
+	return b.PollWithOptions(id, PollOptions{Ack: ack, Wait: wait})
+}
+
+// PollWithOptions can restrict delivery to messages that may wake an idle
+// session, stop an async watcher when its turn ends, or claim a batch for a
+// native push driver. Claimed messages are invisible to every other consumer
+// until the driver accepts or releases them (or the short claim expires).
+func (b *Bus) PollWithOptions(id string, opt PollOptions) ([]Msg, string, error) {
+	deadline := b.opt.Now().Add(opt.Wait)
 	for {
 		b.mu.Lock()
 		b.reapLocked()
@@ -458,15 +544,31 @@ func (b *Bus) Poll(id string, ack bool, wait time.Duration) ([]Msg, string, erro
 			return nil, "", fmt.Errorf("%w: %s", ErrUnknownSession, id)
 		}
 		name := s.Name
-		s.LastSeen = b.now()
-		q := b.inbox[name]
-		if len(q) > 0 {
+		now := b.now()
+		s.LastSeen = now
+		if opt.ActiveOnly && !b.workingLocked(s, now) {
+			b.mu.Unlock()
+			return nil, name, nil
+		}
+		q := b.unclaimedLocked(name, now)
+		if len(q) > 0 && (!opt.WakeOnly || WakesIdlePolicy(q, name, opt.WakePolicy)) {
 			msgs := append([]Msg(nil), q...)
-			if ack {
-				b.inbox[name] = nil
-				b.mine[name] = append(b.mine[name], q...)
-				if len(b.mine[name]) > MineCap {
-					b.mine[name] = b.mine[name][len(b.mine[name])-MineCap:]
+			switch {
+			case opt.Claim != "":
+				claims := b.claims[name]
+				if claims == nil {
+					claims = map[string]claim{}
+					b.claims[name] = claims
+				}
+				for _, m := range msgs {
+					claims[m.ID] = claim{owner: opt.Claim, expires: now + claimTTL}
+					b.setReceiptLocked(m.ID, name, Receipt{State: DeliveryPushing, Driver: opt.Driver, UpdatedAt: now})
+				}
+			case opt.Ack:
+				b.removeFromInboxLocked(name, msgs)
+				b.rememberAcceptedLocked(name, msgs)
+				for _, m := range msgs {
+					b.setReceiptLocked(m.ID, name, Receipt{State: DeliveryAccepted, Driver: "hook", UpdatedAt: now})
 				}
 			}
 			b.mu.Unlock()
@@ -481,10 +583,103 @@ func (b *Bus) Poll(id string, ack bool, wait time.Duration) ([]Msg, string, erro
 	}
 }
 
-// TakeFrom waits for and removes the first message sent by peer (direct or
-// broadcast) from the calling session's inbox — the reply half of `ask`.
-// Other messages stay queued for normal hook delivery.
+// CompleteClaim turns a native driver's accepted batch into normal delivered
+// history, or releases it back to the ordinary hook delivery ladder on error.
+func (b *Bus) CompleteClaim(id, owner, driver string, deliveryErr error) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := b.sess[id]
+	if s == nil {
+		return fmt.Errorf("%w: %s", ErrUnknownSession, id)
+	}
+	name := s.Name
+	now := b.now()
+	claims := b.claims[name]
+	var msgs []Msg
+	for _, m := range b.inbox[name] {
+		c, ok := claims[m.ID]
+		if !ok || c.owner != owner {
+			continue
+		}
+		msgs = append(msgs, m)
+		delete(claims, m.ID)
+	}
+	if len(msgs) == 0 {
+		return nil
+	}
+	if deliveryErr == nil {
+		b.removeFromInboxLocked(name, msgs)
+		b.rememberAcceptedLocked(name, msgs)
+	}
+	for _, m := range msgs {
+		r := Receipt{State: DeliveryQueued, Driver: driver, UpdatedAt: now}
+		if deliveryErr == nil {
+			r.State = DeliveryAccepted
+		} else {
+			r.Error = Trunc(deliveryErr.Error(), 240)
+		}
+		b.setReceiptLocked(m.ID, name, r)
+	}
+	return nil
+}
+
+func (b *Bus) unclaimedLocked(name string, now int64) []Msg {
+	claims := b.claims[name]
+	for id, c := range claims {
+		if c.expires <= now {
+			delete(claims, id)
+		}
+	}
+	q := b.inbox[name]
+	out := make([]Msg, 0, len(q))
+	for _, m := range q {
+		if _, ok := claims[m.ID]; !ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func (b *Bus) removeFromInboxLocked(name string, msgs []Msg) {
+	remove := map[string]bool{}
+	for _, m := range msgs {
+		remove[m.ID] = true
+	}
+	q := b.inbox[name]
+	kept := q[:0]
+	for _, m := range q {
+		if !remove[m.ID] {
+			kept = append(kept, m)
+		}
+	}
+	if len(kept) == 0 {
+		delete(b.inbox, name)
+	} else {
+		b.inbox[name] = kept
+	}
+}
+
+func (b *Bus) rememberAcceptedLocked(name string, msgs []Msg) {
+	b.mine[name] = append(b.mine[name], msgs...)
+	if len(b.mine[name]) > MineCap {
+		b.mine[name] = b.mine[name][len(b.mine[name])-MineCap:]
+	}
+}
+
+// TakeFrom waits for and removes the first message sent by peer. It is kept
+// for compatibility with older callers; ask uses TakeReply for correlation.
 func (b *Bus) TakeFrom(id, peer string, wait time.Duration) (Msg, bool, string) {
+	return b.takeReply(id, peer, "", "", wait)
+}
+
+// TakeReply waits for a reply from peer. Once requestID is supplied, chat and
+// notices from the same peer can no longer be mistaken for the answer. An
+// empty replyTo remains accepted for interoperability with older agents.
+func (b *Bus) TakeReply(id, peer, requestID string, wait time.Duration) (Msg, bool, string) {
+	return b.takeReply(id, peer, requestID, KindReply, wait)
+}
+
+func (b *Bus) takeReply(id, peer, requestID, kind string, wait time.Duration) (Msg, bool, string) {
 	peer = strings.ToLower(strings.TrimSpace(peer))
 	deadline := b.opt.Now().Add(wait)
 	for {
@@ -496,11 +691,18 @@ func (b *Bus) TakeFrom(id, peer string, wait time.Duration) (Msg, bool, string) 
 			return Msg{}, false, ""
 		}
 		name := s.Name
-		s.LastSeen = b.now()
-		q := b.inbox[name]
-		for i, m := range q {
-			if m.From == peer && (m.To == name || m.To == "all") {
-				b.inbox[name] = append(q[:i:i], q[i+1:]...)
+		now := b.now()
+		s.LastSeen = now
+		q := b.unclaimedLocked(name, now)
+		for _, m := range q {
+			matches := m.From == peer && (m.To == name || m.To == "all")
+			if requestID != "" {
+				matches = matches && m.Kind == kind && (m.ReplyTo == requestID || m.ReplyTo == "")
+			}
+			if matches {
+				b.removeFromInboxLocked(name, []Msg{m})
+				b.rememberAcceptedLocked(name, []Msg{m})
+				b.setReceiptLocked(m.ID, name, Receipt{State: DeliveryAccepted, Driver: "ask", UpdatedAt: now})
 				b.mu.Unlock()
 				return m, true, name
 			}
@@ -579,7 +781,7 @@ func (b *Bus) Mine(id string) ([]Msg, string, error) {
 	return append([]Msg(nil), b.mine[s.Name]...), s.Name, nil
 }
 
-// LastPeer returns the most recently delivered message that came from a live
+// LastPeer returns the most recently accepted message that came from a live
 // peer session (optionally only from `peer`) — the message `agentbus reply`
 // answers. Messages from the human ("user") and from sessions that have
 // already left are skipped so a reply always has a real recipient.
@@ -664,6 +866,49 @@ func (b *Bus) UnreadByMessage() map[string][]string {
 	return out
 }
 
+func (b *Bus) Receipts(messageID string) map[string]Receipt {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := map[string]Receipt{}
+	for name, r := range b.receipts[messageID] {
+		out[name] = r
+	}
+	return out
+}
+
+func (b *Bus) ReceiptsByMessage() map[string]map[string]Receipt {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := map[string]map[string]Receipt{}
+	for id, recipients := range b.receipts {
+		for name, r := range recipients {
+			if out[id] == nil {
+				out[id] = map[string]Receipt{}
+			}
+			out[id][name] = r
+		}
+	}
+	return out
+}
+
+func (b *Bus) setReceiptLocked(id, name string, r Receipt) {
+	if b.receipts[id] == nil {
+		b.receipts[id] = map[string]Receipt{}
+	}
+	b.receipts[id][name] = r
+}
+
+func (b *Bus) appendRecentLocked(m Msg) {
+	b.recent = append(b.recent, m)
+	if len(b.recent) > RecentCap {
+		dropped := b.recent[:len(b.recent)-RecentCap]
+		b.recent = b.recent[len(b.recent)-RecentCap:]
+		for _, old := range dropped {
+			delete(b.receipts, old.ID)
+		}
+	}
+}
+
 // DeleteMessage removes a message that is still unread in at least one inbox.
 // It removes every unread copy, the recently-delivered copies, and the global
 // history entry, so the dashboard can discard stale pending mail without
@@ -722,6 +967,10 @@ func (b *Bus) DeleteMessage(id string) (int, error) {
 			delete(b.dup, k)
 		}
 	}
+	for _, claims := range b.claims {
+		delete(claims, id)
+	}
+	delete(b.receipts, id)
 	return removed, nil
 }
 
@@ -793,7 +1042,11 @@ func (b *Bus) removeLocked(s *Session) {
 	}
 	delete(b.inbox, s.Name)
 	delete(b.mine, s.Name)
+	delete(b.claims, s.Name)
 	delete(b.rates, s.Name)
+	for _, recipients := range b.receipts {
+		delete(recipients, s.Name)
+	}
 	b.tomb[s.Name] = b.now() + b.opt.TombTTLSeconds
 }
 
@@ -880,7 +1133,7 @@ func (b *Bus) Snapshot() *State {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	st := &State{
-		Version: 1, Seq: b.seq,
+		Version: 2, Seq: b.seq,
 		Sessions: make([]*Session, 0, len(b.sess)),
 		Inboxes:  map[string][]Msg{},
 		Tomb:     map[string]int64{},
@@ -898,6 +1151,15 @@ func (b *Bus) Snapshot() *State {
 		st.Mine[n] = append([]Msg(nil), q...)
 	}
 	st.Recent = append([]Msg(nil), b.recent...)
+	st.Receipts = map[string]map[string]Receipt{}
+	for id, recipients := range b.receipts {
+		for name, r := range recipients {
+			if st.Receipts[id] == nil {
+				st.Receipts[id] = map[string]Receipt{}
+			}
+			st.Receipts[id][name] = r
+		}
+	}
 	for n, e := range b.tomb {
 		st.Tomb[n] = e
 	}
@@ -912,6 +1174,8 @@ func (b *Bus) Restore(st *State) {
 	b.byName = map[string]*Session{}
 	b.inbox = map[string][]Msg{}
 	b.mine = map[string][]Msg{}
+	b.claims = map[string]map[string]claim{}
+	b.receipts = map[string]map[string]Receipt{}
 	b.tomb = map[string]int64{}
 	b.rates = map[string][]int64{}
 	b.dup = map[string]dupEntry{}
@@ -921,6 +1185,14 @@ func (b *Bus) Restore(st *State) {
 		b.mine[n] = append([]Msg(nil), q...)
 	}
 	b.seq = st.Seq
+	for id, recipients := range st.Receipts {
+		for name, r := range recipients {
+			if r.State == DeliveryPushing {
+				r.State = DeliveryQueued
+			}
+			b.setReceiptLocked(id, name, r)
+		}
+	}
 	for _, s := range st.Sessions {
 		cp := *s
 		b.sess[cp.ID] = &cp
