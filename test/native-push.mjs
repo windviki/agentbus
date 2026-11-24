@@ -12,6 +12,9 @@ const bin = process.env.AGENTBUS_BIN || join(root, 'agentbus')
 const home = mkdtempSync(join(tmpdir(), 'agentbus-native-'))
 const socketPath = join(home, 'claude.sock')
 const baseEnv = { ...process.env, AGENTBUS_HOME: home, AGENTBUS_WEB: '0', AGENTBUS_PRIMER: '0' }
+// The variable locates the binary under test, which may be the npm JS launcher.
+// Child launcher invocations must not inherit it and recursively execute themselves.
+delete baseEnv.AGENTBUS_BIN
 const claudeFrames = []
 const kimiRequests = []
 let kimiServer
@@ -133,7 +136,8 @@ try {
   console.log('ALL NATIVE PUSH TESTS PASSED')
 } catch (error) {
   console.error(error)
-  try { console.error(cli(['who', '--all', '--json'])) } catch { /* daemon unavailable */ }
+  console.error('native test home:', home)
+  try { console.error(cli(['who', '--all', '--json'])) } catch (diagnosticError) { console.error('who diagnostic failed:', diagnosticError.message) }
   try { console.error(readFileSync(join(home, 'state.json'), 'utf8')) } catch { /* no state yet */ }
   try { console.error(readFileSync(join(home, 'daemon.log'), 'utf8')) } catch { /* no daemon log */ }
   process.exitCode = 1
@@ -141,5 +145,6 @@ try {
   try { cli(['stop']) } catch { /* already stopped */ }
   if (claudeServer) await new Promise((resolve) => claudeServer.close(resolve))
   if (kimiServer) await new Promise((resolve) => kimiServer.close(resolve))
-  rmSync(home, { recursive: true, force: true })
+  if (process.env.AGENTBUS_NATIVE_KEEP === '1') console.log('native test state kept at', home)
+  else rmSync(home, { recursive: true, force: true })
 }

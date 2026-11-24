@@ -39,14 +39,18 @@ function candidates() {
 }
 
 const tried = [];
+const launcher = fs.realpathSync(__filename);
 for (const bin of candidates()) {
-  tried.push(bin);
   let st;
+  let real;
   try {
     st = fs.statSync(bin);
+    real = fs.realpathSync(bin);
   } catch (_) {
     continue;
   }
+  if (real === launcher) continue; // AGENTBUS_BIN may point at this JS launcher itself.
+  tried.push(bin);
   if (!st.isFile()) continue;
   const result = spawnSync(bin, process.argv.slice(2), { stdio: 'inherit' });
   if (result.error) {

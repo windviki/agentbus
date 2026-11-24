@@ -33,6 +33,7 @@ npm install -g --prefix "$TMP/prefix" --no-audit --no-fund --loglevel=error \
 BIN="$TMP/prefix/bin/agentbus"
 echo "== installed binary"
 "$BIN" version
+AGENTBUS_BIN="$BIN" "$BIN" version  # self-reference must fall through to the platform binary
 
 echo "== setup dry-run through the installed launcher"
 mkdir -p "$TMP/home/.claude"

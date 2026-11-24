@@ -6,6 +6,16 @@ All notable user-visible changes are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-24
+
+### Fixed
+
+- The npm JS launcher skips its own realpath when `AGENTBUS_BIN` points to the
+  launcher, falling through to the platform binary instead of recursively
+  spawning launcher processes.
+- Native transport tests support running against the installed npm launcher and
+  retain temporary state only when explicitly requested for diagnostics.
+
 ## [0.2.0] - 2026-11-24
 
 ### Added
