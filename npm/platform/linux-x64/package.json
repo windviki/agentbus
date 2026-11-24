@@ -1,6 +1,6 @@
 {
   "name": "@aixyzstudio/agentbus-cli-linux-x64",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Prebuilt agentbus binary for linux x64.",
   "homepage": "https://github.com/windviki/agentbus",
   "repository": {

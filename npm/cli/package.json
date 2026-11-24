@@ -1,6 +1,6 @@
 {
   "name": "@aixyzstudio/agentbus-cli",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Real-time local message bus for concurrent AI agent sessions: presence, peer messaging and coordination across Claude Code, ZCode, Kimi Code, DSH and Codex.",
   "keywords": [
     "ai-agents",
@@ -42,9 +42,9 @@
     "node": ">=18"
   },
   "optionalDependencies": {
-    "@aixyzstudio/agentbus-cli-linux-x64": "0.2.1",
-    "@aixyzstudio/agentbus-cli-linux-arm64": "0.2.1",
-    "@aixyzstudio/agentbus-cli-darwin-x64": "0.2.1",
-    "@aixyzstudio/agentbus-cli-darwin-arm64": "0.2.1"
+    "@aixyzstudio/agentbus-cli-linux-x64": "0.2.2",
+    "@aixyzstudio/agentbus-cli-linux-arm64": "0.2.2",
+    "@aixyzstudio/agentbus-cli-darwin-x64": "0.2.2",
+    "@aixyzstudio/agentbus-cli-darwin-arm64": "0.2.2"
   }
 }

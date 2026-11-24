@@ -64,9 +64,14 @@ func Detect() Agent {
 			break
 		}
 		if !skipComms[st.comm] {
+			cmdline := readCmdline(pid)
+			if agentbusWrapper(cmdline) {
+				pid = st.ppid
+				continue
+			}
 			label := envLabel
 			if label == "" {
-				label = matchLabel(readCmdline(pid))
+				label = matchLabel(cmdline)
 			}
 			if label != "" {
 				return Agent{Pid: pid, Start: st.start, Label: label}
@@ -87,6 +92,16 @@ func Alive(pid int, start string) bool {
 		return false
 	}
 	return start == "" || st.start == start
+}
+
+func agentbusWrapper(cmdline string) bool {
+	for _, arg := range strings.Fields(cmdline) {
+		arg = strings.Trim(arg, "\"'")
+		if arg == "agentbus" || strings.HasSuffix(arg, "/agentbus") || strings.HasSuffix(arg, "/agentbus.js") {
+			return true
+		}
+	}
+	return false
 }
 
 func matchLabel(cmdline string) string {

@@ -6,6 +6,14 @@ All notable user-visible changes are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-24
+
+### Fixed
+
+- Linux session discovery skips AgentBus's own JS/Go wrapper processes, so
+  hooks launched through the npm launcher retain the real Harness PID instead
+  of being reaped when the short-lived wrapper exits.
+
 ## [0.2.1] - 2026-11-24
 
 ### Fixed
