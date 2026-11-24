@@ -51,8 +51,9 @@ URL 必须是 loopback HTTP。token 只从 hook 传给 daemon，不写入 state�
 消息续跑。`TurnStarted` 覆盖 API 与后台 turn，`StopFailure`/`Interrupt` 防止 working
 状态滞留，`SessionHeartbeat` 刷新原生发现。
 
-Bash 没有 session id 环境变量，hook 在 `$AGENTBUS_HOME/pidmap` 保存私有 pid→sid
-映射，CLI 通过祖先进程解析身份。
+Bash 没有 session id 环境变量，hook 在 `$AGENTBUS_HOME/pidmap` 保存按工作区
+隔离的私有 pid→sid 映射，CLI 通过祖先进程与父目录解析，旧格式作为回退。
+因此共享同一宿主 PID 的多个 Kimi 会话也不会串号。
 
 `accepted` 只表示 Kimi API 接受 steer/prompt，不表示模型已行动。传输状态看
 `agentbus receipt`，处理状态看 reply/pending。

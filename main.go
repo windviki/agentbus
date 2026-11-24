@@ -224,25 +224,62 @@ func recordPidMap(home, key string) {
 		return
 	}
 	a := procinfo.Detect()
-	if a.Pid <= 0 || a.Start == "" {
+	cwd, _ := os.Getwd()
+	recordPidMapFor(home, key, a.Pid, a.Start, cwd)
+}
+
+func pidMapScopedPath(home string, pid int, start, cwd string) string {
+	if cwd == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(filepath.Clean(cwd)))
+	return filepath.Join(home, "pidmap", fmt.Sprintf("%d-%s.d", pid, start), fmt.Sprintf("%x", sum))
+}
+
+func recordPidMapFor(home, key string, pid int, start, cwd string) {
+	if pid <= 0 || start == "" || !strings.HasPrefix(key, "sid:") {
 		return
 	}
-	dir := filepath.Join(home, "pidmap")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	legacy := pidMapPath(home, pid, start)
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o700); err != nil {
 		return
 	}
-	path := pidMapPath(home, a.Pid, a.Start)
-	if existing, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(existing)) == key {
-		return // already mapped
+	_ = os.WriteFile(legacy, []byte(key+"\n"), 0o600)
+	// A long-lived host can multiplex several sessions over one PID. Scope the
+	// authoritative mapping by workspace; the legacy file remains for old clients.
+	if scoped := pidMapScopedPath(home, pid, start, cwd); scoped != "" {
+		if err := os.MkdirAll(filepath.Dir(scoped), 0o700); err == nil {
+			_ = os.WriteFile(scoped, []byte(key+"\n"), 0o600)
+		}
 	}
-	_ = os.WriteFile(path, []byte(key+"\n"), 0o600)
 }
 
 func lookupPidMap(home string, pid int, start string) string {
+	cwd, _ := os.Getwd()
+	return lookupPidMapFor(home, pid, start, cwd)
+}
+
+func lookupPidMapFor(home string, pid int, start, cwd string) string {
 	if pid <= 0 || start == "" {
 		return ""
 	}
-	b, err := os.ReadFile(pidMapPath(home, pid, start))
+	for dir := filepath.Clean(cwd); dir != "." && dir != ""; dir = filepath.Dir(dir) {
+		if key := readPidMap(pidMapScopedPath(home, pid, start, dir)); key != "" {
+			return key
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+	}
+	return readPidMap(pidMapPath(home, pid, start))
+}
+
+func readPidMap(path string) string {
+	if path == "" {
+		return ""
+	}
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}

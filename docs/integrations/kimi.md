@@ -57,8 +57,10 @@ and stderr to continue for wake-worthy mail. `TurnStarted` covers API and
 background turns, while `StopFailure`/`Interrupt` prevent stale working state.
 `SessionHeartbeat` refreshes native discovery.
 
-Bash has no session-id variable, so hooks store a private pid→sid map under
-`$AGENTBUS_HOME/pidmap`; CLI calls resolve through ancestor processes.
+Bash has no session-id variable, so hooks store private workspace-scoped
+pid→sid maps under `$AGENTBUS_HOME/pidmap`; CLI calls resolve through ancestor
+processes and parent directories, with legacy mappings as fallback. Multiple
+Kimi sessions multiplexed over one host PID therefore stay distinct.
 
 `accepted` means the Kimi API accepted the steer/prompt, not that the model
 acted on it. Use `agentbus receipt` for transport and reply/pending for

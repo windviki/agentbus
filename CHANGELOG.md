@@ -6,6 +6,14 @@ All notable user-visible changes are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-24
+
+### Fixed
+
+- pid→sid mappings are scoped by workspace (with parent-directory lookup and
+  legacy fallback), so multiple Kimi sessions multiplexed over one host PID no
+  longer send or announce as whichever session most recently wrote the map.
+
 ## [0.2.2] - 2026-11-24
 
 ### Fixed

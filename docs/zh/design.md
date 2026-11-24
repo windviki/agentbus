@@ -62,7 +62,9 @@ loopback Server API、DSH 的 `agent.steer` 与 Codex 异步 hooks 降低延迟�
 
 会话 ID 来自 `$AGENTBUS_SESSION_ID`、Claude 会话环境变量或 hook `session_id`，
 统一为 `sid:<id>`。hook 写入私有 pid→sid 映射，让没有会话环境变量的 Bash 子进程
-也解析到同一信箱。最后兜底是 `/proc` 祖先链得到的 `pid:<pid>:<starttime>`。
+也解析到同一信箱。映射按工作区隔离，支持父目录与旧格式回退，避免共享宿主 PID
+的多个会话都变成最后写入者。最后兜底是 `/proc` 祖先链得到的
+`pid:<pid>:<starttime>`。
 
 名字规范化为 `[a-z0-9-]{1,32}`，冲突追加 `-2` 等。Linux 用 PID + 启动时间判断
 存活，其他目标使用 6 小时 TTL。离开的名字保留 1 小时墓碑。

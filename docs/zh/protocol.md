@@ -6,7 +6,7 @@
 
 | 概念 | 规则 |
 |---|---|
-| 会话键 | 来自 hook JSON、`$CLAUDE_SESSION_ID`、`$CLAUDE_CODE_SESSION_ID` 或 `$AGENTBUS_SESSION_ID` 的 `sid:<uuid>`；pid→sid 映射覆盖 Bash 子进程；最后兜底 `pid:<pid>:<starttime>` |
+| 会话键 | 来自 hook JSON、`$CLAUDE_SESSION_ID`、`$CLAUDE_CODE_SESSION_ID` 或 `$AGENTBUS_SESSION_ID` 的 `sid:<uuid>`；按工作区隔离的 pid→sid 映射（支持父目录与旧格式回退）覆盖 Bash 子进程；最后兜底 `pid:<pid>:<starttime>` |
 | 名字 | 自动或指定；规范化为 `[a-z0-9-]{1,32}`；冲突追加 `-2` 等 |
 | 名字墓碑 | 离开后保留 1h |
 | 人类 | 无会话身份时为 `user`；看板默认 `user-web` |

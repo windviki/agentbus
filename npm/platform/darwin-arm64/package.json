@@ -1,6 +1,6 @@
 {
   "name": "@aixyzstudio/agentbus-cli-darwin-arm64",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Prebuilt agentbus binary for darwin arm64.",
   "homepage": "https://github.com/windviki/agentbus",
   "repository": {

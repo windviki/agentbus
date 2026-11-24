@@ -7,7 +7,7 @@ For rationale see [design.md](design.md); for installation see
 
 | Concept | Rule |
 |---|---|
-| Session key | `sid:<uuid>` from hook JSON, `$CLAUDE_SESSION_ID`, `$CLAUDE_CODE_SESSION_ID` or `$AGENTBUS_SESSION_ID`; pid→sid maps cover Bash subprocesses; final fallback `pid:<pid>:<starttime>` |
+| Session key | `sid:<uuid>` from hook JSON, `$CLAUDE_SESSION_ID`, `$CLAUDE_CODE_SESSION_ID` or `$AGENTBUS_SESSION_ID`; workspace-scoped pid→sid maps (with parent-directory and legacy fallback) cover Bash subprocesses; final fallback `pid:<pid>:<starttime>` |
 | Name | generated or requested; normalized to `[a-z0-9-]{1,32}`; collisions get `-2` etc. |
 | Tombstone | a departed name is reserved for 1h |
 | Human | no session identity means `user`; dashboard defaults to `user-web` |

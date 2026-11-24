@@ -71,8 +71,10 @@ cwd/branch/status. Empty hooks emit nothing.
 
 Session IDs come from `$AGENTBUS_SESSION_ID`, Claude's session environment, or
 hook `session_id`, normalized to `sid:<id>`. Hooks write a private pid→sid map
-so Bash subprocesses without a session variable resolve the same mailbox. The
-final fallback is `pid:<pid>:<starttime>` from `/proc` ancestry.
+so Bash subprocesses without a session variable resolve the same mailbox. Maps
+are scoped by workspace with parent-directory lookup and legacy fallback, so a
+multiplexed host PID does not collapse sessions into the last writer. The final
+fallback is `pid:<pid>:<starttime>` from `/proc` ancestry.
 
 Names are normalized to `[a-z0-9-]{1,32}`; collisions receive `-2`, etc. Linux
 uses PID + start-time liveness; other targets use a six-hour TTL. Departed names
