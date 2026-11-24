@@ -15,6 +15,7 @@
 #   ./scripts/install.sh --zcode-hooks   # alias for --agents zcode
 #   ./scripts/install.sh --kimi-hooks    # alias for --agents kimi
 #   ./scripts/install.sh --dsh-plugin    # alias for --agents dsh
+#   ./scripts/install.sh --codex-hooks   # alias for --agents codex
 #   ./scripts/install.sh --dry-run       # show the plan, write nothing
 #   ./scripts/install.sh --uninstall     # remove the wiring
 #   ./scripts/install.sh --plugin        # refresh repo plugin bundles, print paths
@@ -38,6 +39,7 @@ while [ "$#" -gt 0 ]; do
     --zcode-hooks)   SETUP_ARGS+=(--agents zcode) ;;
     --kimi-hooks)    SETUP_ARGS+=(--agents kimi) ;;
     --dsh-plugin)    SETUP_ARGS+=(--agents dsh) ;;
+    --codex-hooks)   SETUP_ARGS+=(--agents codex) ;;
     --plugin)        PLUGIN=1 ;;
     --yes|-y)        SETUP_ARGS+=(--yes) ;;
     --dry-run)       SETUP_ARGS+=(--dry-run) ;;
@@ -45,7 +47,7 @@ while [ "$#" -gt 0 ]; do
     --no-skill)      SETUP_ARGS+=(--no-skill) ;;
     --json)          JSON=1; SETUP_ARGS+=(--json) ;;
     --agents)
-      [ "$#" -gt 0 ] || die "--agents needs a value (claude,zcode,kimi,dsh,all)"
+      [ "$#" -gt 0 ] || die "--agents needs a value (claude,zcode,kimi,dsh,codex,all)"
       SETUP_ARGS+=(--agents "$1"); shift ;;
     --agents=*)      SETUP_ARGS+=(--agents "${arg#--agents=}") ;;
     -h|--help)
@@ -66,7 +68,7 @@ if [ "$PLUGIN" = "1" ]; then
     mkdir -p "$d/skills/agentbus"
     cp "$ROOT/skills/agentbus/SKILL.md" "$d/skills/agentbus/SKILL.md"
   done
-  cat <<EOF
+  cat <<'EOF'
    claude code: add the local marketplace once, then install the plugin:
                   claude plugin marketplace add "$ROOT/integrations/claude-code"
                   claude plugin install agentbus@agentbus

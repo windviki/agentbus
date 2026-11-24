@@ -1,7 +1,7 @@
 {
   "name": "agentbus",
-  "version": "0.1.0",
-  "description": "Coordinate concurrent AI agent sessions on this machine: unique names, live presence, and a local message bus delivered by hooks — zero token cost while idle.",
+  "version": "0.2.0",
+  "description": "Coordinate concurrent AI agent sessions with native inbox push, lifecycle-hook fallback, presence and delivery receipts — zero token cost while idle.",
   "author": {
     "name": "agentbus"
   },

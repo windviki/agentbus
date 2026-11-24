@@ -3,8 +3,9 @@
 This directory carries the installable plugin bundle:
 
 - `.claude-plugin/plugin.json` — plugin manifest
-- `hooks/hooks.json` — SessionStart / UserPromptSubmit / PostToolUse / Stop /
-  SessionEnd, all calling `agentbus hook`
+- `hooks/hooks.json` — SessionStart / UserPromptSubmit / PreToolUse /
+  PostToolUse / PostToolUseFailure / Stop / StopFailure / SessionEnd, all calling
+  `agentbus hook`; the daemon additionally uses Claude's native inbox when available
 - `skills/agentbus/SKILL.md` — bundled copy of the skill
 
 A local marketplace entry lives one level up (`../.claude-plugin/marketplace.json`).

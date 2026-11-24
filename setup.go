@@ -75,6 +75,11 @@ func discoverAgents(home string) []agentSpec {
 			Dir: dshHomeDir(home), Bins: []string{"dsh"},
 			Config: filepath.Join(dshHomeDir(home), "profiles", "web", "cordis.patch.yml"),
 		},
+		{
+			ID: "codex", Name: "Codex", Method: "hooks + async delivery",
+			Dir: codexHomeDir(home), Bins: []string{"codex"},
+			Config: filepath.Join(codexHomeDir(home), "hooks.json"),
+		},
 	}
 	for i := range specs {
 		s := &specs[i]
@@ -106,6 +111,13 @@ func dshHomeDir(home string) string {
 	return filepath.Join(home, ".dsh")
 }
 
+func codexHomeDir(home string) string {
+	if h := strings.TrimSpace(os.Getenv("CODEX_HOME")); h != "" {
+		return h
+	}
+	return filepath.Join(home, ".codex")
+}
+
 // tildeDir renders a path below home as ~/... for readable output.
 func tildeDir(home, path string) string {
 	if rel, err := filepath.Rel(home, path); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
@@ -116,7 +128,7 @@ func tildeDir(home, path string) string {
 
 func agentConfigured(s agentSpec, home string) bool {
 	switch s.ID {
-	case "claude", "zcode":
+	case "claude", "zcode", "codex":
 		data, err := os.ReadFile(s.Config)
 		return err == nil && strings.Contains(string(data), agentbusMarker)
 	case "kimi":
@@ -192,7 +204,7 @@ func cmdSetup(args []string) int {
 	fs.BoolVar(&opts.JSON, "json", false, "machine-readable report")
 	fs.BoolVar(&opts.Uninstall, "uninstall", false, "remove the wiring agentbus added")
 	fs.BoolVar(&opts.NoSkill, "no-skill", false, "do not install the agentbus skill")
-	fs.StringVar(&opts.Agents, "agents", "", "comma-separated: claude,zcode,kimi,dsh,all,none")
+	fs.StringVar(&opts.Agents, "agents", "", "comma-separated: claude,zcode,kimi,dsh,codex,all,none")
 	if err := fs.Parse(args); err != nil {
 		return fail("bad flags: %v", err)
 	}
@@ -353,7 +365,7 @@ func parseAgentSelection(csv string) (map[string]bool, error) {
 	if csv == "" {
 		return nil, nil
 	}
-	known := map[string]bool{"claude": true, "zcode": true, "kimi": true, "dsh": true}
+	known := map[string]bool{"claude": true, "zcode": true, "kimi": true, "dsh": true, "codex": true}
 	switch strings.ToLower(csv) {
 	case "all":
 		return known, nil
@@ -364,7 +376,7 @@ func parseAgentSelection(csv string) (map[string]bool, error) {
 	for _, field := range strings.Split(csv, ",") {
 		id := strings.ToLower(strings.TrimSpace(field))
 		if !known[id] {
-			return nil, fmt.Errorf("unknown agent %q (want claude, zcode, kimi, dsh, all or none)", field)
+			return nil, fmt.Errorf("unknown agent %q (want claude, zcode, kimi, dsh, codex, all or none)", field)
 		}
 		out[id] = true
 	}
@@ -468,6 +480,7 @@ func skillTargets(home string) []string {
 	add(".claude")
 	add(".kimi-code")
 	add(".kimi")
+	add(".codex")
 	// ZCode scans ~/.agents/skills, so a second copy would duplicate the
 	// catalog entry; deliberately no ~/.zcode/skills copy.
 	return targets
@@ -525,13 +538,15 @@ func installAgent(s agentSpec, home string) setupAction {
 		return wireKimi(s, home, true)
 	case "dsh":
 		return wireDSH(s, true)
+	case "codex":
+		return wireCodex(s, true)
 	}
 	return setupAction{Agent: s.ID, Action: "unknown"}
 }
 
 func planAgent(s agentSpec, home string) setupAction {
 	switch s.ID {
-	case "claude", "zcode":
+	case "claude", "zcode", "codex":
 		return setupAction{Agent: s.ID, Action: "would merge hooks", Target: s.Config, Changed: !s.Configured}
 	case "kimi":
 		return setupAction{Agent: s.ID, Action: "would merge hooks + AGENTS.md", Target: s.Config, Changed: !s.Configured}
@@ -552,7 +567,7 @@ func planUninstallSkills(home string) []setupAction {
 
 func planUninstallAgent(s agentSpec, home string) setupAction {
 	switch s.ID {
-	case "claude", "zcode":
+	case "claude", "zcode", "codex":
 		return setupAction{Agent: s.ID, Action: "would remove hooks", Target: s.Config, Changed: s.Configured}
 	case "kimi":
 		return setupAction{Agent: s.ID, Action: "would remove hooks + AGENTS.md", Target: s.Config, Changed: s.Configured}
@@ -572,6 +587,8 @@ func uninstallAgent(s agentSpec, home string) setupAction {
 		return wireKimi(s, home, false)
 	case "dsh":
 		return wireDSH(s, false)
+	case "codex":
+		return wireCodex(s, false)
 	}
 	return setupAction{Agent: s.ID, Action: "unknown"}
 }
@@ -584,8 +601,11 @@ var claudeHookEvents = []struct {
 }{
 	{"SessionStart", 15},
 	{"UserPromptSubmit", 5},
+	{"PreToolUse", 5},
 	{"PostToolUse", 5},
+	{"PostToolUseFailure", 5},
 	{"Stop", 5},
+	{"StopFailure", 5},
 	{"SessionEnd", 5},
 }
 
@@ -595,7 +615,9 @@ var zcodeHookEvents = []struct {
 }{
 	{"SessionStart", 15000},
 	{"UserPromptSubmit", 5000},
+	{"PreToolUse", 5000},
 	{"PostToolUse", 5000},
+	{"PostToolUseFailure", 5000},
 	{"Stop", 5000},
 }
 
@@ -688,6 +710,74 @@ func wireZcode(s agentSpec, install bool) setupAction {
 	a.Changed = changed
 	if changed {
 		a.Note = backupNote(s.Config)
+	}
+	return a
+}
+
+func wireCodex(s agentSpec, install bool) setupAction {
+	a := setupAction{Agent: "codex", Action: map[bool]string{true: "wire hooks + async delivery", false: "remove hooks"}[install], Target: s.Config}
+	cfg, existed, err := readJSONConfig(s.Config)
+	if err != nil {
+		a.Warning = err.Error()
+		return a
+	}
+	if !existed && !install {
+		a.Action, a.Changed = "no hooks file", false
+		return a
+	}
+	hooks, err := hookMap(cfg, "hooks")
+	if err != nil {
+		a.Warning = fmt.Sprintf("%s: %v", s.Config, err)
+		return a
+	}
+	prepared := map[string][]any{}
+	for _, ev := range []struct {
+		name    string
+		timeout int
+		async   bool
+	}{
+		{"SessionStart", 15, false},
+		{"UserPromptSubmit", 5, false},
+		{"UserPromptSubmit", 600, true},
+		{"PreToolUse", 5, false},
+		{"PostToolUse", 5, false},
+		{"Stop", 5, false},
+		{"Interrupt", 3, false},
+		{"SessionEnd", 3, false},
+	} {
+		kept, seen := prepared[ev.name]
+		if !seen {
+			kept = filterHookEntries(hooks[ev.name])
+		}
+		if install {
+			command := agentbusMarker
+			if ev.async {
+				command += " --async-watch"
+			}
+			kept = append(kept, map[string]any{"hooks": []any{
+				map[string]any{"type": "command", "command": command, "timeout": ev.timeout, "async": ev.async},
+			}})
+		}
+		prepared[ev.name] = kept
+	}
+	for name, kept := range prepared {
+		if len(kept) == 0 {
+			delete(hooks, name)
+		} else {
+			hooks[name] = kept
+		}
+	}
+	changed, err := writeJSONIfChanged(s.Config, cfg, existed)
+	if err != nil {
+		a.Warning = err.Error()
+		return a
+	}
+	a.Changed = changed
+	if install {
+		a.Note = "review and trust AgentBus hooks with /hooks"
+	}
+	if changed {
+		a.Note = joinNotes(a.Note, backupNote(s.Config))
 	}
 	return a
 }
@@ -917,8 +1007,12 @@ func kimiBlock() string {
 	}{
 		{"SessionStart", 15},
 		{"UserPromptSubmit", 5},
+		{"TurnStarted", 5},
 		{"PostToolUse", 5},
 		{"Stop", 5},
+		{"StopFailure", 5},
+		{"Interrupt", 5},
+		{"SessionHeartbeat", 5},
 		{"SessionEnd", 5},
 	} {
 		fmt.Fprintf(&b, "[[hooks]]\nevent = %q\ncommand = %q\ntimeout = %d\n\n", ev.Event, cmd, ev.Timeout)

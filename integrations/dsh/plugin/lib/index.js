@@ -15,9 +15,10 @@
  *   tools/post-execute   -> `agentbus hook` PostToolUse (same-step injection)
  *   agent/turn-stopping  -> `agentbus hook` Stop (urgent / direct request => steer/continue)
  *   agent/disposed       -> `agentbus leave`
+ *   per-agent watcher    -> long-poll; steer active turns, wake for idle request/urgent
  *
  * Plus native tools: agentbus_who / send / ask / reply / announce / inbox /
- * primer. Nothing in the host is blocked on the bus: every spawn is guarded,
+ * receipt / primer. Nothing in the host is blocked on the bus: every spawn is guarded,
  * time-bounded and failure-tolerant (a throw inside a plugin callback would
  * take the whole Host down).
  */
@@ -99,19 +100,7 @@ function dbg(message) {
   }
 }
 const ASK_TIMEOUT_MS = 180000
-/**
- * Idle wake interval. A Stop hook cannot fire after the agent has already
- * stopped, so a direct request sent while the session sits at the prompt
- * would wait for the human. While an agent is idle we poll the same policy
- * through `agentbus hook Stop` and steer it awake when a request/urgent is
- * queued. `agent.steer()` on an idle driver starts a turn. 0 disables the
- * poller; AGENTBUS_DSH_POLL_MS overrides the 5s default.
- */
-const IDLE_POLL_MS = (() => {
-  const raw = process.env.AGENTBUS_DSH_POLL_MS
-  const n = raw == null ? 5000 : Number(raw)
-  return Number.isFinite(n) ? Math.max(0, Math.min(n, 60000)) : 5000
-})()
+const WATCH_WAIT_MS = 30000
 
 function sessionKey(agent) {
   const id = String(agent?.session?.id ?? '')
@@ -172,15 +161,17 @@ function runCli(args, agent, { input, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
 }
 
 /** Run one hook event for an agent; returns the parsed hook JSON (or null). */
-async function runHook(agent, event) {
+async function runHook(agent, event, { state = '', waitMs = 0 } = {}) {
   const payload = JSON.stringify({
     hook_event_name: event,
     session_id: String(agent?.session?.id ?? ''),
     cwd: agent?.session?.header?.cwd ?? '',
+    agentbus_state: state,
+    wait_ms: waitMs,
   })
   const { stdout } = await runCli(['hook'], agent, {
     input: payload,
-    timeoutMs: event === 'SessionStart' ? 15000 : DEFAULT_TIMEOUT_MS,
+    timeoutMs: event === 'SessionStart' ? 15000 : (waitMs > 0 ? waitMs + 5000 : DEFAULT_TIMEOUT_MS),
   })
   try {
     return JSON.parse(stdout)
@@ -237,7 +228,9 @@ function cliResultText(result) {
 export function apply(ctx) {
   const serial = makeSerial()
   const liveAgents = new Set()
-  const polling = new Set()
+  const watching = new Set()
+  let stopped = false
+  ctx.effect(() => () => { stopped = true })
   try {
     debugSink = (message) => ctx.logger?.info?.('[agentbus] ' + message)
   } catch {
@@ -255,6 +248,7 @@ export function apply(ctx) {
     } catch {
       /* never break session creation because the bus is down */
     }
+    watchAgent(agent)
   })
 
   // 2) Turn boundary: deliver messages queued while the session was idle.
@@ -303,32 +297,26 @@ export function apply(ctx) {
     }
   })
 
-  // 4b) Idle wake: a Stop hook cannot fire after the agent has already
-  // stopped, so poll the bus while the agent is idle and steer it awake for
-  // the same policy the Stop hook enforces (urgent or a direct request). This
-  // is what makes `agentbus ask` work against an idle DSH session; hook-only
-  // harnesses (ZCode/Claude Code) have no equivalent host wake API.
-  if (IDLE_POLL_MS > 0) {
-    ctx.effect(() => {
-      const timer = setInterval(() => {
-        for (const agent of liveAgents) {
-          if (agent.status !== 'idle' || polling.has(agent)) continue
-          polling.add(agent)
-          void wakeIdle(agent).catch(() => {}).finally(() => polling.delete(agent))
+  // 4b) Native push: one long-poll per live agent. While working, every message
+  // is steered into the current turn without cancelling tools. While idle, the
+  // server holds ordinary mail and returns only urgent/direct requests, whose
+  // steer starts a new turn. Atomic inbox ack means this watcher and the ordinary
+  // lifecycle hooks cannot both consume the same batch.
+  function watchAgent(agent) {
+    if (watching.has(agent)) return
+    watching.add(agent)
+    void (async () => {
+      while (!stopped && liveAgents.has(agent)) {
+        const state = agent.status === 'idle' ? 'idle' : 'working'
+        const output = await runHook(agent, 'Watch', { state, waitMs: WATCH_WAIT_MS })
+        if (output?.decision !== 'block' || typeof output.reason !== 'string' || !output.reason) continue
+        try {
+          agent.steer(relayMessage(output.reason, state === 'idle' ? 'wake' : 'push'))
+        } catch {
+          /* a disposal can race a completed poll; the next lifecycle event wins */
         }
-      }, IDLE_POLL_MS)
-      timer.unref?.()
-      return () => clearInterval(timer)
-    })
-  }
-
-  async function wakeIdle(agent) {
-    if (agent.status !== 'idle') return
-    const output = await serial(agent, () => runHook(agent, 'Stop'))
-    if (output?.decision === 'block' && typeof output.reason === 'string' && output.reason) {
-      dbg('waking idle session for a queued urgent/request')
-      agent.steer(relayMessage(output.reason, 'wake'))
-    }
+      }
+    })().catch(() => {}).finally(() => watching.delete(agent))
   }
 
   // 5) Session end: leave the bus (fire-and-forget, but never unhandled).
@@ -416,7 +404,7 @@ export function apply(ctx) {
       execute: async (args, exec) => {
         const wait = Number(args.wait_seconds ?? 120)
         const cliArgs = ['ask']
-        if (Number.isFinite(wait) && wait > 0) cliArgs.push('--wait', String(Math.min(wait, 170)))
+        if (Number.isFinite(wait) && wait >= 0) cliArgs.push('--wait', String(Math.min(wait, 170)))
         cliArgs.push(String(args.to), String(args.text))
         return cliResultText(await runCli(cliArgs, toolAgent(exec), {
           timeoutMs: (Math.min(Math.max(wait, 1), 170) + 10) * 1000,
@@ -461,6 +449,20 @@ export function apply(ctx) {
           timeoutMs: (Math.min(Math.max(wait, 0), 70) + 10) * 1000,
         }))
       },
+    }))
+
+    register(defineTool({
+      name: 'agentbus_receipt',
+      description: 'Inspect per-recipient delivery receipts (queued/pushing/accepted). ' +
+        'Accepted means the Harness accepted transport, not that the model processed the message.',
+      parameters: {
+        message_id: { type: 'string', required: true, description: 'AgentBus message id returned by send/ask' },
+      },
+      output: outputText,
+      timeoutMs: 15000,
+      execute: async (args, exec) => cliResultText(await runCli(
+        ['receipt', String(args.message_id)], toolAgent(exec),
+      )),
     }))
 
     register(defineTool({

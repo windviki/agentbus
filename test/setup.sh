@@ -9,7 +9,7 @@ trap '"$TMP/bin/agentbus" stop >/dev/null 2>&1 || true; rm -rf "$TMP"' EXIT
 HOME_DIR="$TMP/home"
 BUS="$TMP/bus"
 BIN="$TMP/bin/agentbus"
-mkdir -p "$HOME_DIR/.claude" "$HOME_DIR/.zcode/cli" "$HOME_DIR/.kimi-code" "$TMP/bin"
+mkdir -p "$HOME_DIR/.claude" "$HOME_DIR/.zcode/cli" "$HOME_DIR/.kimi-code" "$HOME_DIR/.codex" "$TMP/bin"
 
 fail() { echo "setup-test: FAIL: $*" >&2; echo "--- tree ---" >&2; find "$HOME_DIR" -type f -maxdepth 6 >&2; exit 1; }
 
@@ -43,26 +43,26 @@ timeout = 5
 EOF
 
 echo "== dry-run writes nothing"
-"$BIN" setup --dry-run --json --agents claude,zcode,kimi >"$TMP/dry.json"
+"$BIN" setup --dry-run --json --agents claude,zcode,kimi,codex >"$TMP/dry.json"
 [ ! -e "$HOME_DIR/.agents/skills/agentbus/SKILL.md" ] || fail "dry-run installed the skill"
-"$BIN" setup --dry-run --json --agents claude,zcode,kimi >"$TMP/dry.json"
+"$BIN" setup --dry-run --json --agents claude,zcode,kimi,codex >"$TMP/dry.json"
 python3 - "$TMP/dry.json" <<'PY'
 import json,sys
 r=json.load(open(sys.argv[1]))
 assert r["dryRun"] is True
-assert {a["id"] for a in r["detected"]} == {"claude","zcode","kimi","dsh"}, r["detected"]
+assert {a["id"] for a in r["detected"]} == {"claude","zcode","kimi","dsh","codex"}, r["detected"]
 assert r["actions"], r
 PY
 
 echo "== install"
-"$BIN" setup --yes --agents claude,zcode,kimi >"$TMP/install.log"
+"$BIN" setup --yes --agents claude,zcode,kimi,codex >"$TMP/install.log"
 
 python3 - "$HOME_DIR" <<'PY'
 import json, os, sys
 home = sys.argv[1]
 claude = json.load(open(os.path.join(home, ".claude/settings.json")))
 hooks = claude["hooks"]
-events = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd"]
+events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "StopFailure", "SessionEnd"]
 for ev in events:
     cmds = [h["command"] for e in hooks.get(ev, []) for h in e.get("hooks", [])]
     assert cmds.count("agentbus hook") == 1, (ev, cmds)
@@ -71,9 +71,17 @@ assert claude["env"]["KEEP"] == "1"
 
 z = json.load(open(os.path.join(home, ".zcode/cli/config.json")))
 assert z["hooks"]["enabled"] is True
-for ev in ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]:
+for ev in ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]:
     cmds = [h["command"] for e in z["hooks"]["events"][ev] for h in e.get("hooks", [])]
     assert cmds.count("agentbus hook") == 1, (ev, cmds)
+
+codex = json.load(open(os.path.join(home, ".codex/hooks.json")))
+for ev in ["SessionStart", "PreToolUse", "PostToolUse", "Stop", "Interrupt", "SessionEnd"]:
+    cmds = [h["command"] for e in codex["hooks"][ev] for h in e.get("hooks", [])]
+    assert cmds.count("agentbus hook") == 1, (ev, cmds)
+prompt_hooks = [h for e in codex["hooks"]["UserPromptSubmit"] for h in e.get("hooks", [])]
+assert any(h["command"] == "agentbus hook" for h in prompt_hooks), prompt_hooks
+assert any(h["command"] == "agentbus hook --async-watch" and h.get("async") is True for h in prompt_hooks), prompt_hooks
 
 toml = open(os.path.join(home, ".kimi-code/config.toml")).read()
 assert toml.count("# >>> agentbus") == 1, toml
@@ -89,7 +97,7 @@ PY
 
 echo "== idempotent"
 before="$(cd "$HOME_DIR" && find . -type f ! -name '*.agentbus-bak' | sort | xargs sha256sum | sha256sum)"
-"$BIN" setup --yes --agents claude,zcode,kimi >"$TMP/install2.log"
+"$BIN" setup --yes --agents claude,zcode,kimi,codex >"$TMP/install2.log"
 after="$(cd "$HOME_DIR" && find . -type f ! -name '*.agentbus-bak' | sort | xargs sha256sum | sha256sum)"
 [ "$before" = "$after" ] || fail "second setup changed files"
 grep -q 'agentbus setup' "$TMP/install2.log" || fail "second setup produced no report"
@@ -115,6 +123,8 @@ assert "echo custom" in cmds, cmds
 assert claude["env"]["KEEP"] == "1"
 z = json.load(open(os.path.join(home, ".zcode/cli/config.json")))
 assert "agentbus hook" not in json.dumps(z)
+codex = json.load(open(os.path.join(home, ".codex/hooks.json")))
+assert "agentbus hook" not in json.dumps(codex)
 toml = open(os.path.join(home, ".kimi-code/config.toml")).read()
 assert "agentbus" not in toml, toml
 assert 'model = "k2"' in toml, toml

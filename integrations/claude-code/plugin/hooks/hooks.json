@@ -15,6 +15,13 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbus hook", "timeout": 5 }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "hooks": [
@@ -22,7 +29,21 @@
         ]
       }
     ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbus hook", "timeout": 5 }
+        ]
+      }
+    ],
     "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbus hook", "timeout": 5 }
+        ]
+      }
+    ],
+    "StopFailure": [
       {
         "hooks": [
           { "type": "command", "command": "agentbus hook", "timeout": 5 }

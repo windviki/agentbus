@@ -15,7 +15,21 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbus hook", "timeoutMs": 5000 }
+        ]
+      }
+    ],
     "PostToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "agentbus hook", "timeoutMs": 5000 }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
       {
         "hooks": [
           { "type": "command", "command": "agentbus hook", "timeoutMs": 5000 }

@@ -24,7 +24,7 @@ func TestParseAgentSelection(t *testing.T) {
 		wantErr bool
 	}{
 		{"", 0, false},
-		{"all", 4, false},
+		{"all", 5, false},
 		{"none", 0, false},
 		{"claude,zcode", 2, false},
 		{" claude , KIMI ", 2, false},
@@ -55,13 +55,13 @@ func TestParseAgentSelection(t *testing.T) {
 
 func TestDiscoverAgentsFromConfigDirs(t *testing.T) {
 	home := testHome(t)
-	for _, d := range []string{".claude", ".zcode", ".kimi-code", ".dsh"} {
+	for _, d := range []string{".claude", ".zcode", ".kimi-code", ".dsh", ".codex"} {
 		if err := os.MkdirAll(filepath.Join(home, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	specs := discoverAgents(home)
-	if len(specs) != 4 {
+	if len(specs) != 5 {
 		t.Fatalf("got %d specs", len(specs))
 	}
 	for _, s := range specs {
@@ -69,7 +69,7 @@ func TestDiscoverAgentsFromConfigDirs(t *testing.T) {
 			t.Errorf("%s not detected from its config dir", s.ID)
 		}
 	}
-	if got := len(detectedAgents(specs)); got != 4 {
+	if got := len(detectedAgents(specs)); got != 5 {
 		t.Fatalf("detectedAgents = %d", got)
 	}
 }
@@ -92,8 +92,8 @@ func TestClaudeHooksIdempotentAndReversible(t *testing.T) {
 		}
 	}
 	data, _ := os.ReadFile(path)
-	if n := strings.Count(string(data), agentbusMarker); n != 5 {
-		t.Fatalf("agentbus hooks = %d, want 5\n%s", n, data)
+	if n := strings.Count(string(data), agentbusMarker); n != 8 {
+		t.Fatalf("agentbus hooks = %d, want 8\n%s", n, data)
 	}
 	if !strings.Contains(string(data), "echo custom") {
 		t.Fatal("custom hook was removed")
@@ -141,20 +141,59 @@ func TestZCodeHooks(t *testing.T) {
 		t.Fatal("hooks.enabled was not set")
 	}
 	events := hooks["events"].(map[string]any)
-	for _, ev := range []string{"SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"} {
+	for _, ev := range []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"} {
 		if _, ok := events[ev]; !ok {
 			t.Errorf("missing event %s", ev)
 		}
 	}
 	wireZcode(spec, true)
 	data, _ = os.ReadFile(path)
-	if n := strings.Count(string(data), agentbusMarker); n != 4 {
-		t.Fatalf("agentbus hooks = %d, want 4", n)
+	if n := strings.Count(string(data), agentbusMarker); n != 6 {
+		t.Fatalf("agentbus hooks = %d, want 6", n)
 	}
 	wireZcode(spec, false)
 	data, _ = os.ReadFile(path)
 	if strings.Contains(string(data), agentbusMarker) {
 		t.Fatalf("uninstall left hooks: %s", data)
+	}
+}
+
+func TestCodexHooksAsyncWatchIdempotentAndReversible(t *testing.T) {
+	home := testHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := discoverAgents(home)[4]
+	path := filepath.Join(home, ".codex", "hooks.json")
+	if err := os.WriteFile(path, []byte(`{"description":"custom","hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo custom"}]}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		a := wireCodex(spec, true)
+		if a.Warning != "" {
+			t.Fatal(a.Warning)
+		}
+		if !strings.Contains(a.Note, "/hooks") {
+			t.Fatalf("missing hook trust guidance: %+v", a)
+		}
+	}
+	data, _ := os.ReadFile(path)
+	if n := strings.Count(string(data), agentbusMarker); n != 8 {
+		t.Fatalf("agentbus hooks = %d, want 8\n%s", n, data)
+	}
+	if n := strings.Count(string(data), `"async": true`); n != 1 {
+		t.Fatalf("async watchers = %d, want 1\n%s", n, data)
+	}
+	if !strings.Contains(string(data), "agentbus hook --async-watch") || !strings.Contains(string(data), "echo custom") {
+		t.Fatalf("async watcher or custom hook missing: %s", data)
+	}
+	wireCodex(spec, false)
+	data, _ = os.ReadFile(path)
+	if strings.Contains(string(data), agentbusMarker) {
+		t.Fatalf("uninstall left agentbus hooks: %s", data)
+	}
+	if !strings.Contains(string(data), "echo custom") {
+		t.Fatalf("uninstall removed custom hook: %s", data)
 	}
 }
 

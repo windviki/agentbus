@@ -21,7 +21,6 @@ const home = mkdtempSync(join(tmpdir(), 'ab-dsh-wake-'))
 Object.assign(process.env, {
   AGENTBUS_HOME: home,
   AGENTBUS_BIN: bin,
-  AGENTBUS_DSH_POLL_MS: '200',
   AGENTBUS_WEB: '0',
 })
 
@@ -74,6 +73,16 @@ try {
   if (!payload.includes('direct request')) throw new Error('wake payload is not a direct-request wake: ' + payload)
   console.log(`PASS idle DSH wake: ${mock.name} steered with the direct request`)
   console.log('     ' + payload.slice(0, 180) + '…')
+
+  cli(['send', '--session', 'sid:mock-sender', mock.name, 'dsh-working-push: adjust without a tool boundary'])
+  const workingDeadline = Date.now() + 5000
+  while (steered.length < 2 && Date.now() < workingDeadline) await wait(100)
+  if (steered.length < 2) throw new Error('working agent did not receive native push without a tool event')
+  const workingPayload = JSON.stringify(steered[1])
+  if (!workingPayload.includes('dsh-working-push') || !workingPayload.includes('"form":"push"')) {
+    throw new Error('working push payload or provenance is wrong: ' + workingPayload)
+  }
+  console.log('PASS working DSH push: chat steered into the active turn without a tool boundary')
 } catch (error) {
   console.error('FAIL', error)
   process.exitCode = 1
