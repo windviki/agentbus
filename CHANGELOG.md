@@ -6,8 +6,25 @@ All notable user-visible changes are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-24
+
 ### Added
 
+- Harness-native real-time delivery: Claude Code inbox sockets, Kimi Server
+  API `steer` / idempotent `prompts`, DSH active-turn steering, and Codex
+  active-turn async hooks. Ordinary lifecycle hooks remain the fallback.
+- Atomic native-delivery claims with timeout, retry and hook fallback, plus
+  per-recipient `queued` / `pushing` / `accepted` receipts in `agentbus
+  receipt`, MCP, the dashboard and `/api/state`. Accepted is transport state,
+  not a claim that the model processed the message.
+- Sender work context (`cwd`, `repo`, `branch`, `status`) on messages and
+  session guidance to adjust the existing plan without restarting the task.
+- Codex setup through `$CODEX_HOME/hooks.json`, including an async
+  `UserPromptSubmit` watcher, with `/hooks` trust guidance and manual assets.
+- `ask --wait 0` for non-blocking requests, `send --json`, and the DSH
+  `agentbus_receipt` / MCP `agentbus_receipt` tools.
+- Native transport end-to-end tests for Claude, Kimi and Codex, and DSH
+  active-turn push coverage.
 - Session activity state: hooks report `working` at turn start / tool calls and
   `idle` at Stop, so the bus can tell "doing something now" from "finished but
   still alive". A stale `working` assertion (older than 2h) is treated as an
@@ -19,6 +36,14 @@ All notable user-visible changes are documented here. The format follows
 
 ### Changed
 
+- DSH replaces the 5-second idle poller with a 30-second long-poll watcher;
+  active watchers stop at turn end and idle watchers only return wake-worthy
+  mail. `AGENTBUS_DSH_POLL_MS` is removed.
+- Claude, ZCode and Kimi configurations cover additional lifecycle events;
+  Kimi tool events remain observation-only while Server API push handles
+  mid-turn delivery.
+- `ask` correlates replies by sender and `replyTo` instead of consuming the
+  first message from that peer. Legacy empty `replyTo` replies still work.
 - `agentbus who`, `agentbus peers`, the SessionStart join summary and
   `agentbus status` list only sessions currently working by default. Finished
   sessions used to clutter every new session's roster, especially under DSH and
@@ -27,6 +52,13 @@ All notable user-visible changes are documented here. The format follows
 - Protocol: `register` and `poll` accept an optional `state`, a new `state` op
   reports it explicitly, and session objects carry `state`, `state_at` and the
   derived `working` flag. `who` still returns every live session.
+
+### Fixed
+
+- Native endpoint tokens cross the hook→daemon wire protocol but are never
+  serialized into session state or public APIs.
+- The plugin-install help heredoc no longer executes backtick examples as
+  shell commands.
 
 ## [0.1.0] - 2026-10-30
 

@@ -2,7 +2,7 @@
 
 **A local message bus for parallel AI coding-agent sessions.**
 
-`agentbus` gives every Claude Code / ZCode / Kimi Code / DSH session a unique
+`agentbus` gives every Claude Code / ZCode / Kimi Code / DSH / Codex session a unique
 name, a mailbox and presence, so parallel agents in the same repository can
 announce their work, ask each other questions, and split tasks before they
 collide — with **zero token cost while idle**.
@@ -24,14 +24,16 @@ agentbus setup --uninstall
 
 ```console
 $ agentbus who
-NAME         AGENT        STATUS                                       WHERE                    SEEN
-bob          claude-code  redesigning the tag filter UI in wt-auth     ~/proj-wt-auth           3m ago
-yarrow-yak   zcode        migrating tests to vitest in wt-tests        ~/proj-wt-tests@vitest   12s ago
+NAME         AGENT        ACTIVITY     STATUS                                      WHERE
+bob          claude-code  working 3m   redesigning the tag filter UI in wt-auth    ~/proj-wt-auth
+yarrow-yak   zcode        working 12s  migrating tests to vitest in wt-tests       ~/proj-wt-tests@vitest
 ```
 
-- Hooks at `SessionStart`, `PostToolUse`, `UserPromptSubmit` and `Stop`
-  deliver peer messages at natural boundaries; an idle session is woken only
-  for `urgent` messages and direct requests.
+- Native Claude inbox / Kimi Server API / DSH steering and Codex async hooks
+  deliver during active work; lifecycle hooks provide fallback. Idle sessions
+  wake only for urgent messages and direct requests where supported.
+- `agentbus receipt` and the dashboard distinguish queued/pushing/accepted
+  transport from an actual reply. Sender cwd/branch/status accompanies mail.
 - The daemon auto-starts on first use; state lives in `~/.agentbus`.
 - Local dashboard at `http://127.0.0.1:8787/`, plus a stdio MCP server
   (`agentbus mcp`) and an A2A subset for other harnesses.
