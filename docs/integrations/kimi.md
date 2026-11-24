@@ -1,67 +1,69 @@
 # Kimi Code integration
 
-Kimi Code supports lifecycle hooks whose stdin payload is compatible with the
-Claude Code / ZCode hook shape (`hook_event_name`, `session_id`, `cwd`,
-`client_type`), but its **output contract differs**:
+Kimi Code uses two complementary paths: the **loopback Server API** for native
+steer/prompt delivery, and lifecycle hooks for registration, roster injection,
+activity and fallback.
 
-- plain stdout from `UserPromptSubmit` is appended to the model context
-  (no JSON envelope);
-- `Stop` blocks/continues by exiting **2** with the reason on stderr;
-- `PostToolUse` is observation-only: stdout is ignored.
-
-`agentbus hook` detects `client_type: "kimi_code_cli"` and switches to that
-output mode. PostToolUse deliberately does not poll/ack in Kimi mode (it would
-consume a message without showing it); mail is delivered at the next prompt,
-the Stop wake, or an explicit `agentbus inbox`. Activity state follows the same
-boundaries: `UserPromptSubmit` marks the session `working` and `Stop` marks it
-`idle`, so a Kimi session appears in `agentbus who` for the duration of its turn
-and only under `who --all` while it waits at the prompt.
-
-## Install (automated)
+## Install
 
 ```bash
 npm install -g agentbus-cli
 agentbus setup --agents kimi
 ```
 
-From a source checkout use `./scripts/install.sh --agents kimi`. The setup step:
-- copies the skill to `~/.kimi-code/skills/agentbus/`;
-- appends a managed `[[hooks]]` block (SessionStart, UserPromptSubmit,
-  PostToolUse, Stop, SessionEnd) to `~/.kimi-code/config.toml`
-  (backup: `config.toml.agentbus-bak`; re-running setup replaces the block
-  instead of duplicating it);
-- upserts the session contract in **`~/.kimi-code/AGENTS.md`** between
-  `<!-- agentbus:begin -->` markers. Kimi loads this global instruction file
-  every session, which is how new sessions learn the bus without a user
-  reminder (SessionStart stdout is ignored by Kimi).
-- Kimi ignores SessionStart stdout, so the first `UserPromptSubmit` emits the
-  workspace-grouped roster exactly once (a per-session marker prevents repeats).
+Or from source: `./scripts/install.sh --agents kimi`. Start a new Kimi session.
+Setup:
 
-Start a new Kimi session afterwards; running sessions do not reload config.
+- installs the skill and the session contract in `~/.kimi-code/AGENTS.md`;
+- manages nine `[[hooks]]` entries in `~/.kimi-code/config.toml`:
+  `SessionStart`, `UserPromptSubmit`, `TurnStarted`, `PostToolUse`, `Stop`,
+  `StopFailure`, `Interrupt`, `SessionHeartbeat`, `SessionEnd`;
+- backs up touched files and remains idempotent.
 
-## Identity
+Kimi ignores SessionStart stdout, so the first `UserPromptSubmit` emits the
+workspace roster once. Tool events are observation-only: they refresh presence
+and native configuration without consuming mail that stdout cannot display.
 
-Kimi's Bash tool has no session-id environment variable. The hook records
-`kimi process pid -> sid` under `$AGENTBUS_HOME/pidmap/`, and `agentbus
-send/reply` run from Kimi's Bash tool resolves the identity by walking back to
-the ancestor process (pid start time guards reuse). No extra flags needed.
+## Native Server API delivery
 
-## Verified (2026-10-29)
+The daemon discovers running instances under
+`$KIMI_CODE_HOME/server/instances` (desktop first, then newest), validates
+`GET /api/v1/meta`, and reads `$KIMI_CODE_HOME/server.token`.
 
-Kimi's 7-day quota was exhausted (`provider.api_error: 429 weekly usage
-limit`) during installation, so a live model session could not be completed.
-The hook contract was verified with real payloads against a test daemon:
+- working: `POST /api/v1/sessions/<session_id>/steer` injects into the current
+  turn without cancelling tools;
+- idle, direct request/urgent only: `POST …/prompts` starts a turn using a
+  stable AgentBus `prompt_id`, making retries idempotent;
+- idle ordinary mail: remains queued for a natural boundary.
 
-- `SessionStart` with `client_type: kimi_code_cli` registered the session
-  (`kimi` agent label);
-- `UserPromptSubmit` printed the plain, framed peer message with `reply`
-  guidance (Kimi appends this to context);
-- `Stop` with a pending `urgent` (or a request addressed to the session)
-  exited **2** and printed the reason on stderr, which Kimi treats as "continue
-  the turn"; `AGENTBUS_WAKE=urgent` restores urgent-only wake.
-- As with every hook-only harness, a request that arrives after Kimi has
-  already stopped at the prompt waits for the next prompt or tool call; Kimi has
-  no host-level wake API. The bus dashboard shows the pending request.
+If no compatible server is reachable, delivery falls back to prompt/Stop hooks.
+AgentBus does not start another Kimi server implicitly. To select an existing
+loopback server explicitly:
 
-Once the quota resets, `kimi -p "..."` can be used for a live smoke test; no
-further configuration is needed.
+```bash
+export AGENTBUS_KIMI_URL=http://127.0.0.1:58627
+export AGENTBUS_KIMI_TOKEN=...   # optional when already discoverable
+```
+
+The URL must be loopback HTTP. Tokens are passed from hook to daemon but never
+written to state or returned by APIs. `AGENTBUS_PUSH=0` disables native
+registration. Kimi's Server API is experimental; the running server's
+`/openapi.json` is the version-specific source of truth.
+
+## Hooks, identity and receipts
+
+`UserPromptSubmit` emits plain text for Kimi's context; `Stop` uses exit code 2
+and stderr to continue for wake-worthy mail. `TurnStarted` covers API and
+background turns, while `StopFailure`/`Interrupt` prevent stale working state.
+`SessionHeartbeat` refreshes native discovery.
+
+Bash has no session-id variable, so hooks store a private pid→sid map under
+`$AGENTBUS_HOME/pidmap`; CLI calls resolve through ancestor processes.
+
+`accepted` means the Kimi API accepted the steer/prompt, not that the model
+acted on it. Use `agentbus receipt` for transport and reply/pending for
+processing.
+
+Official references: [Server API](https://www.kimi.com/code/docs/en/kimi-code-cli/reference/server-api.html),
+[hooks](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/hooks.html),
+[steering during streaming](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/interaction.html).

@@ -6,11 +6,11 @@
 
 ## 我们的需求清单
 
-1. **跨 CLI**：claude code / zcode / kimi / dsh / opencode 等本地并行会话都能接入；
+1. **跨 CLI**：claude code / zcode / kimi / dsh / codex / opencode 等本地并行会话都能接入；
 2. **会话命名**：启动即注册，名字唯一（服务端分配或查重）；
 3. **存在感与状态**：别人能看到"bob 正在 XXX"，新人开局即可发现冲突；
 4. **点对点消息**：向指定会话发消息，协商分工；支持广播；
-5. **近实时**：对端工作中（下一个工具调用）或空闲（Stop 时唤醒）都能收到；
+5. **近实时**：原生推送/异步投递可进入活动 turn，支持的 Harness 可因定向 request 唤醒空闲对端；生命周期 hooks 负责降级；
 6. **token 经济**：空闲、无消息时**零**上下文开销——这是与 MCP 方案的本质差异；
 7. **免管理**：会话崩溃自动回收，daemon 自动拉起，用户不需要运维。
 
@@ -63,9 +63,10 @@ unix-socket daemon（来自 amp-skill），补上我们独有的部分：
 
 - 跨 CLI 的身份协议（session_id → 唯一名，`/proc` 祖先探测兜底）；
 - 存在感 + 状态公告（"bob 正在 XXX"）；
-- 四个投递时机（SessionStart 名册 / PostToolUse 工作中 / UserPromptSubmit 回合开始 / Stop 对 urgent 与定向 request 唤醒）；
+- 原生 inbox/API 投递 + 生命周期降级（Claude/Kimi/DSH 推送、Codex 异步 hooks、
+  prompt/tool/Stop 边界），并提供占用与逐收件人回执；
 - PID 级 liveness 与墓碑式名字回收；
 - 限速 + 去重防 agent 对话风暴；
 - daemon 自动拉起与原子状态持久化；
 - 可选的本地边界：Web 看板、A2A 子集、stdio MCP facade——都只是同一份
-  总线状态的视图，不改变"hook 为底座"的结论。
+  总线状态的视图；原生推送与 hooks 共用同一投递与回执模型。

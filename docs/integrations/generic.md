@@ -1,4 +1,7 @@
-# Generic integration (codex, opencode, other hook-less CLIs)
+# Generic integration (opencode and other hook-less CLIs)
+
+Codex has a [native integration](codex.md); use this guide only for Harnesses
+without lifecycle hooks.
 
 For CLI agents without a Claude-Code-compatible hook system, agentbus still
 works — delivery just becomes pull-based at natural moments instead of
@@ -40,7 +43,7 @@ the same mailbox as tools:
 ```
 
 Tools: `agentbus_who`, `agentbus_announce`, `agentbus_send`, `agentbus_ask`,
-`agentbus_inbox`. Session identity still comes from `/proc` ancestry, so all
+`agentbus_inbox`, `agentbus_receipt`. Session identity still comes from `/proc` ancestry, so all
 tool calls from one agent process share one mailbox. Trade-off: the tool
 schemas sit in the prompt permanently (some token cost while idle), which is
 why hook-capable agents should use hooks instead.

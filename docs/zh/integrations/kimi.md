@@ -1,62 +1,62 @@
 # Kimi Code 集成
 
-Kimi Code 支持生命周期 hook，其 stdin payload 与 Claude Code / ZCode 的 hook
-结构兼容（`hook_event_name`、`session_id`、`cwd`、`client_type`），但
-**输出契约不同**：
+Kimi Code 使用两条互补路径：**loopback Server API** 负责原生 steer/prompt 投递，
+生命周期 hooks 负责注册、名册注入、活动状态与降级。
 
-- `UserPromptSubmit` 的纯 stdout 会追加到模型上下文（没有 JSON 信封）；
-- `Stop` 通过以退出码 **2** 退出、并把原因写到 stderr 来阻塞/继续；
-- `PostToolUse` 只做观察：stdout 会被忽略。
-
-`agentbus hook` 会识别 `client_type: "kimi_code_cli"` 并切换到这种输出模式。
-在 Kimi 模式下，PostToolUse 刻意不 poll/ack（否则会消费消息却不展示它）；
-消息会在下一个 prompt、Stop 唤醒或显式 `agentbus inbox` 时投递。活动状态沿用同样的
-边界：`UserPromptSubmit` 标为 `working`，`Stop` 标为 `idle`，因此 Kimi 会话在回合
-进行中会出现在 `agentbus who`，停在提示符时只在 `who --all` 里出现。
-
-## 安装（自动化）
+## 安装
 
 ```bash
 npm install -g agentbus-cli
 agentbus setup --agents kimi
 ```
 
-源码 checkout 请使用 `./scripts/install.sh --agents kimi`。setup 步骤：
+源码使用 `./scripts/install.sh --agents kimi`，之后新开 Kimi 会话。setup：
 
-- 把 skill 复制到 `~/.kimi-code/skills/agentbus/`；
-- 向 `~/.kimi-code/config.toml` 追加一个受管理的 `[[hooks]]` 块
-  （SessionStart、UserPromptSubmit、PostToolUse、Stop、SessionEnd）
-  （备份：`config.toml.agentbus-bak`；重跑 setup 会替换该块，而不是重复追加）；
-- 在 **`~/.kimi-code/AGENTS.md`** 中两个 `<!-- agentbus:begin -->` 标记之间
-  upsert 会话契约。Kimi 每个会话都会加载这个全局指令文件，新会话就是靠它
-  学会使用总线的，无需用户提醒（Kimi 会忽略 SessionStart 的 stdout）。
-- Kimi 忽略 SessionStart 的 stdout，因此首个 `UserPromptSubmit` 会恰好注入
-  一次按工作区分组的名册（每会话一个标记，防止重复）。
+- 安装 skill，并在 `~/.kimi-code/AGENTS.md` 写入会话契约；
+- 在 `~/.kimi-code/config.toml` 管理 9 个 `[[hooks]]`：`SessionStart`、
+  `UserPromptSubmit`、`TurnStarted`、`PostToolUse`、`Stop`、`StopFailure`、
+  `Interrupt`、`SessionHeartbeat`、`SessionEnd`；
+- 备份触碰文件，重复执行保持幂等。
 
-之后请新开一个 Kimi 会话；运行中的会话不会重新加载配置。
+Kimi 忽略 SessionStart stdout，所以首个 `UserPromptSubmit` 只注入一次工作区名册。
+工具事件是 observation-only：只刷新 presence 与原生配置，不消费 stdout 无法展示
+的消息。
 
-## 身份
+## 原生 Server API 投递
 
-Kimi 的 Bash 工具没有会话 id 环境变量。hook 会把 `kimi process pid -> sid`
-记录到 `$AGENTBUS_HOME/pidmap/` 下，从 Kimi 的 Bash 工具运行的
-`agentbus send/reply` 会通过回溯到祖先进程来确定身份（用 pid 启动时间防止
-复用）。无需额外参数。
+daemon 从 `$KIMI_CODE_HOME/server/instances` 发现运行实例（桌面优先，再按最新
+启动排序），通过 `GET /api/v1/meta` 验证，并读取
+`$KIMI_CODE_HOME/server.token`。
 
-## 已验证（2026-10-29）
+- 工作中：`POST /api/v1/sessions/<session_id>/steer` 注入当前 turn，不取消工具；
+- 空闲且为定向 request/urgent：`POST …/prompts` 使用稳定 AgentBus `prompt_id`
+  开启 turn，重试幂等；
+- 空闲普通消息：保留到自然边界。
 
-安装期间 Kimi 的 7 天额度已耗尽：
-`provider.api_error: 429 weekly usage limit`，因此无法完成一次真实的模型
-会话。hook 契约是用真实 payload 对测试 daemon 验证的：
+没有兼容 server 可达时降级 prompt/Stop hooks。AgentBus 不会隐式再启动一个 Kimi
+server。需要显式选择已有 loopback server 时：
 
-- 带 `client_type: kimi_code_cli` 的 `SessionStart` 注册了会话（agent 标签
-  为 `kimi`）；
-- `UserPromptSubmit` 打印了带边框的纯文本对端消息，并附带 `reply` 指引
-  （Kimi 会把它追加到上下文）；
-- 存在待处理的 `urgent`（或发给该会话的 request）时，`Stop` 以退出码 **2**
-  退出并在 stderr 打印原因，Kimi 会将其视为“继续该回合”；
-  `AGENTBUS_WAKE=urgent` 可恢复仅 urgent 唤醒。
-- 和所有仅靠 hook 的 harness 一样，在 Kimi 已经停在 prompt 之后到达的
-  request 要等到下一次 prompt 或 tool 调用；Kimi 没有宿主级唤醒 API。总线
-  看板会显示这条待处理的 request。
+```bash
+export AGENTBUS_KIMI_URL=http://127.0.0.1:58627
+export AGENTBUS_KIMI_TOKEN=...   # 已可自动发现时可省略
+```
 
-额度恢复后，可以用 `kimi -p "..."` 做一次真实冒烟测试；无需其他配置。
+URL 必须是 loopback HTTP。token 只从 hook 传给 daemon，不写入 state，也不经 API
+返回。`AGENTBUS_PUSH=0` 禁用原生注册。Kimi Server API 仍为 experimental，运行实例
+的 `/openapi.json` 是对应版本的最终依据。
+
+## Hooks、身份与回执
+
+`UserPromptSubmit` 输出 Kimi 可注入的纯文本；`Stop` 用退出码 2 和 stderr 对可唤醒
+消息续跑。`TurnStarted` 覆盖 API 与后台 turn，`StopFailure`/`Interrupt` 防止 working
+状态滞留，`SessionHeartbeat` 刷新原生发现。
+
+Bash 没有 session id 环境变量，hook 在 `$AGENTBUS_HOME/pidmap` 保存私有 pid→sid
+映射，CLI 通过祖先进程解析身份。
+
+`accepted` 只表示 Kimi API 接受 steer/prompt，不表示模型已行动。传输状态看
+`agentbus receipt`，处理状态看 reply/pending。
+
+官方参考：[Server API](https://www.kimi.com/code/docs/en/kimi-code-cli/reference/server-api.html)、
+[hooks](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/hooks.html)、
+[流式期间 steering](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/interaction.html)。

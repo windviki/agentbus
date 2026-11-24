@@ -4,9 +4,10 @@
 
 | Layer | Location | What it verifies | Dependencies |
 |---|---|---|---|
-| Unit | `internal/bus/*_test.go` | registration/naming/delivery/reclamation/persistence/rate limiting/deduplication/kind/ask/reply | Go |
-| End-to-end | [test/e2e.sh](../test/e2e.sh) | real daemon + two-session hook JSON + Web + A2A + MCP + restart | Go, curl |
-| DSH idle wake | [test/dsh-idle-wake.mjs](../test/dsh-idle-wake.mjs) | the plugin's Stop policy for idle agents + `agent.steer` (mock agent, no model quota spent) | Go, Node |
+| Unit | `internal/{bus,delivery,server}/*_test.go` | registration, claims/fallback, receipts, native frames/API, reply correlation, persistence | Go |
+| End-to-end | [test/e2e.sh](../test/e2e.sh) | real daemon + hook JSON + native push + async watcher + Web/A2A/MCP + restart | Go, Node, curl |
+| Native transport | [test/native-push.mjs](../test/native-push.mjs) | real binary against mock Claude socket + Kimi Server API + Codex async hook | Go, Node |
+| DSH native push | [test/dsh-idle-wake.mjs](../test/dsh-idle-wake.mjs) | idle request wake + active-turn push without a tool event (mock agent, no model quota) | Go, Node |
 | Plugin structure | `claude plugin validate` / `plugin details` | whether the host accepts the plugin manifest and hooks | Claude Code |
 | Installer | [test/setup.sh](../test/setup.sh) | detection, selection, idempotency, backups and uninstall in a throwaway `HOME` | Go, python3 |
 | Interop | [test/interop.sh](../test/interop.sh) | whether real dsh ↔ claude sessions can exchange messages and react | dsh, claude, quota |
@@ -24,7 +25,8 @@ go test -race ./...      # concurrency/race (optional, slower)
 ```bash
 ./test/setup.sh           # installer: detection/idempotency/uninstall, temp HOME
 ./test/e2e.sh
-./test/dsh-idle-wake.sh   # DSH plugin idle wake (mock agent, no quota spent)
+node test/native-push.mjs  # native transports through the real binary
+./test/dsh-idle-wake.sh   # DSH idle + active-turn push (mock agent)
 ```
 
 The script starts its own daemon inside a `mktemp`ed `AGENTBUS_HOME` (dashboard
@@ -40,6 +42,7 @@ covered:
 | Workspace | `peers` groups by worktree/repo; Kimi's first prompt automatically gets the roster injected |
 | Delivery | PostToolUse injection; no re-delivery after ack |
 | Delivery ladder | chat does not wake; a directed request wakes and flushes the queue; a broadcast request does not wake; `AGENTBUS_WAKE=urgent` falls back to urgent-only; urgent always wakes |
+| Native + async | Claude socket push/idle policy/no duplicate, Kimi steer/idle prompt/receipt, Codex active-turn async context; separate temp daemon |
 | ask | directed request round-trip; the answer is consumed and not re-delivered |
 | reply | no need to remember the id; replies to the peer's most recent message (kind=reply + replyTo) |
 | notify | one-way notification, no reply semantics |
@@ -65,8 +68,9 @@ claude plugin validate integrations/zcode
 claude --plugin-dir "$PWD/integrations/claude-code/plugin" plugin details agentbus
 ```
 
-Expect `plugin details` to show 1 skill, 5 hooks (SessionStart /
-UserPromptSubmit / PostToolUse / Stop / SessionEnd), and `Status: ✔ loaded`.
+Expect `plugin details` to show 1 skill, 8 hooks (SessionStart /
+UserPromptSubmit / PreToolUse / PostToolUse / PostToolUseFailure / Stop /
+StopFailure / SessionEnd), and `Status: ✔ loaded`.
 
 ZCode has no scriptable CLI; its plugin manifest follows the
 `.zcode-plugin/plugin.json` spec; on this machine only JSON/structural
@@ -171,7 +175,19 @@ printf '%s' '{"hook_event_name":"Stop",...}' | agentbus hook
 Installation: see [integrations/kimi.md](integrations/kimi.md). After the quota
 resets, one live smoke test with `kimi -p "..."` is enough.
 
-## 8. Dashboard shows 0 sessions: troubleshooting
+## 8. Native delivery verification (2026-11-24)
+
+The current suite passed with Go 1.24.13, Node 24.22.1, Claude Code 2.1.139,
+Kimi Code 2.6.2 and DSH 0.2.2-rc.5 installed. `test/native-push.mjs` uses the
+real AgentBus binary and daemon with mock loopback Harness endpoints, not a
+live model: Claude authenticated socket frames (including idle policy and no
+hook duplicate), Kimi `steer` + idempotent idle `prompts` + accepted receipts,
+and Codex active-turn async `additionalContext`. `test/dsh-idle-wake.mjs` also
+verifies active DSH push. Kimi's generated nine-event config passed `kimi doctor`.
+These tests verify transport and lifecycle behavior without spending model
+quota; they do not claim a live model processed a native message.
+
+## 9. Dashboard shows 0 sessions: troubleshooting
 
 If `agentbus who` has sessions but the dashboard/API is empty:
 
@@ -186,12 +202,15 @@ Common cause: an early test daemon still holds 8787, so the daemon for
 `web disabled: bind: address already in use`). Stop the test daemon holding
 the port, then restart the default daemon.
 
-## 9. Pre-commit checklist
+## 10. Pre-commit checklist
 
 ```bash
 gofmt -l .
 go vet ./...
-go test ./...
+go test -race ./...
+./test/setup.sh
 ./test/e2e.sh
+./scripts/test-npm.sh
+python3 scripts/check-docs.py
 git diff --check
 ```

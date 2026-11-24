@@ -2,370 +2,227 @@
 
 ## 1. Goals and non-goals
 
-**Goals**: let AI CLI agent sessions working in parallel on the same machine
-(Claude Code / ZCode / Kimi / DSH / opencode / ...) discover each other,
-message each other, and negotiate a division of work, so that:
+**Goals**: let AI coding-agent sessions on one machine (Claude Code / ZCode /
+Kimi / DSH / Codex / ...) discover each other, exchange information while work
+is in flight, and adjust their current plans before they collide. The user
+should not have to copy messages between terminals or interrupt a peer merely
+to say that another session exists.
 
-- a new session sees from the start that "bob is fixing auth", avoiding
-  collisions;
-- when a collision risk appears, the agents negotiate among themselves ("I take
-  the handler, you take the tests");
-- **the user does not need to interrupt bob to tell him a session is running in
-  parallel** — that is the whole point.
+Delivery has three distinct milestones:
 
-**Non-goals (v1)**: cross-machine networking, guaranteed durable message
-delivery (at-least-once across restarts), multi-user authentication, task
-orchestration (who assigns work to whom) — we only do "peer messages +
-presence". At the end of v1 we added three local boundaries: the Web dashboard,
-the A2A subset and the stdio MCP facade; they are all just read-only or write
-views of the same bus state and introduce no new semantics.
+1. **queued** — the daemon accepted the message for a recipient;
+2. **accepted** — the target Harness accepted it through a hook or native API;
+3. **processed** — the agent replied or visibly adjusted its work. AgentBus
+   never labels transport acceptance as model processing.
 
-## 2. Core insight: token economics
+**Non-goals**: cross-machine networking, multi-user authentication, durable
+exactly-once delivery, and task orchestration. Local delivery is best-effort /
+at-least-once with short claims and hook fallback; a task claim board is a
+separate layer.
 
-The most expensive resource in an agent session is the context window. The idle
-cost of four integration approaches:
+## 2. Token and attention economics
 
-| Approach | Idle context cost | Message delivery latency |
+| Approach | Idle context cost | Delivery timing |
 |---|---|---|
-| MCP server (tool set) | **~200–500 tokens resident per session** (the schema is always in the system prompt) | the agent must actively call a tool to poll |
-| skill + polling by convention | ~30 tokens (the skill description line; for Claude's plugin details the whole set measured about 86) | depends on the agent's discipline |
-| file mailbox + UserPromptSubmit hook (the claude-session-bus approach) | 0 | **delivered only on the next user prompt submission** (possibly hours) |
-| **agentbus: hook delivery at every boundary** | **0** (the hook exits empty-handed, the host injects nothing) | working: next tool call; idle: urgent / direct request via Stop wake |
+| MCP polling tools | schemas remain in context | only when the agent polls |
+| Skill + polling convention | small, but discipline-dependent | next agent-chosen call |
+| Prompt-only mailbox | zero while empty | next user prompt, possibly hours |
+| Lifecycle hooks | zero while empty | next prompt/tool/stop boundary |
+| **Native push / async delivery** | zero while empty | active turn: next safe model boundary; idle request/urgent: new turn where supported |
 
-Conclusion: **hooks are the only channel that is "zero cost when idle + near
-real-time"**. MCP works as a facade, but not as the base.
+Hooks remain the common fallback. Native channels improve latency without
+adding an always-resident MCP schema: Claude's per-session inbox socket, Kimi's
+loopback Server API, DSH's `agent.steer`, and Codex's async hooks. No channel
+cancels an in-progress tool call. Ordinary chat/notice/reply does not wake idle
+sessions; a direct request or urgent message may do so.
 
-Specific per-event token budget (measured text):
-
-- join roster injection: about 30 + 20 per other session (one-time);
-- each received message: about 15 + the message body;
-- `announce` / `send`: one Bash call each (~25 out + ~15 in);
-- idle with no messages: **0** (the hook prints an empty string, the host
-  injects nothing); only a direct request or an urgent message costs one wake.
+Per-message context is deliberately small: envelope + body + the sender's
+cwd/branch/status. Empty hooks emit nothing.
 
 ## 3. Architecture
 
 ```
-┌─────────────┐  ┌────────────────┐  ┌─────────────┐   ┌──────────────┐
-│ Claude Code │  │      ZCode     │  │ other CLIs  │   │ human /      │
-│  (session)  │  │   (session)    │  │ (no hooks)  │   │ external     │
-│ hooks:      │  │ hooks:         │  │ skill / MCP │   │ clients      │
-│ SessionStart│  │ (same, no End) │  │ agent calls │   │ HTTP / MCP   │
-│ PostToolUse │  │                │  │             │   │              │
-│ Stop/User.. │  │                │  │             │   │              │
-└──────┬──────┘  └───────┬────────┘  └──────┬──────┘   └──────┬───────┘
-       │ agentbus hook   │ agentbus hook    │ agentbus mcp    │ /api/*, /a2a/<name>
-       ▼                 ▼                  ▼                 ▼
-   unix socket (~/.agentbus/bus.sock, 0600) — JSON lines   ── loopback HTTP
-       ▲                 ▲                  ▲                 ▲
-       └─────────────────┴──────────────────┴─────────────────┘
-                     ┌───┴──────────┐
-                     │ agentbusd    │  single-process Go daemon
-                     │ unique names │  auto-spawned (ssh-agent style)
-                     │ inbox        │  atomic state.json persistence
-                     │ presence     │  PID/TTL reaping + name tombstones
-                     │ rate/dedup   │  dashboard + A2A boundary (loopback)
-                     └──────────────┘
+┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌──────────────┐
+│ Claude Code │ │ Kimi / DSH  │ │ Codex/ZCode │ │ human/client │
+│ hooks+inbox │ │ API / steer │ │ async/hooks │ │ HTTP/MCP/A2A │
+└──────┬──────┘ └──────┬──────┘ └──────┬──────┘ └──────┬───────┘
+       └───────────────┴───────────────┴───────────────┘
+                         │ unix JSON lines (0600)
+                  ┌──────┴────────┐
+                  │ agentbusd     │ registry + inbox + receipts
+                  │ claim/ack     │ atomic state.json + ring log
+                  │ native push   │ retry + ordinary-hook fallback
+                  └───────────────┘
 ```
 
-Components:
-
-- **daemon** (`agentbus serve`, auto-spawned by any use): registry + inboxes +
-  a global message ring log;
-- **CLI** (same binary): manual commands for humans and agents
-  (who/send/ask/notify/announce/inbox/log/doctor);
-- **`agentbus setup`**: detects installed harnesses and wires their hooks,
-  native plugin or skill in one idempotent pass (see [install.md](install.md));
-- **`agentbus hook`**: the single hook entry point. Reads the hook JSON on
-  stdin (`hook_event_name` / `session_id` / `cwd`), prints the strict JSON the
-  host expects for the event, **and prints nothing for an empty result**;
-- **`agentbus mcp`**: a stdio MCP server exposing who/announce/send/ask/inbox
-  as tools, for harnesses that have no hooks but support MCP;
-- **web / A2A** (`internal/web`): the dashboard + `/api/state`, `/api/send` +
-  the JSON-RPC subset at `/a2a/<name>`, bound to loopback only;
-- **skill** (`SKILL.md`): teaches agents collaboration etiquette and commands;
-  installed to `~/.agents/skills/` (a directory shared across agents) and to
-  each agent's own skills directory;
-- **plugin bundles** (`integrations/*/plugin`): package the same hooks + skill
-  into one installable unit (Claude Code local marketplace / `--plugin-dir`,
-  ZCode plugin management).
+- **daemon**: sessions, names, presence, inboxes, claims, receipts, recent log;
+- **CLI**: `who/send/ask/reply/receipt/inbox/log/doctor` and lifecycle entry
+  points;
+- **setup**: idempotent wiring for Claude, ZCode, Kimi, DSH and Codex, plus the
+  shared skill;
+- **native delivery**: a short claim hides a batch from other consumers while
+  the daemon pushes it. Success marks it accepted; failure releases it for the
+  ordinary hook ladder;
+- **web / A2A / MCP**: alternate views of the same bus, not separate message
+  stores;
+- **plugin bundles**: package hooks + skill for Claude Code and ZCode.
 
 ## 4. Session identity and lifecycle
 
-**Session key (ID)** — stable, no coordination required:
+Session IDs come from `$AGENTBUS_SESSION_ID`, Claude's session environment, or
+hook `session_id`, normalized to `sid:<id>`. Hooks write a private pid→sid map
+so Bash subprocesses without a session variable resolve the same mailbox. The
+final fallback is `pid:<pid>:<starttime>` from `/proc` ancestry.
 
-1. `$AGENTBUS_SESSION_ID` / `$CLAUDE_SESSION_ID` (ZCode injects the latter in
-   the hook) → `sid:<uuid>`;
-2. `session_id` in the hook stdin JSON → `sid:<uuid>` (the Claude Code path);
-3. fallback: the first process on the `/proc` ancestor chain that is not a
-   shell and whose cmdline matches a known CLI → `pid:<pid>:<starttime>` (for
-   hook-less systems such as Kimi/DSH, several calls within the same agent
-   process get the same key).
+Names are normalized to `[a-z0-9-]{1,32}`; collisions receive `-2`, etc. Linux
+uses PID + start-time liveness; other targets use a six-hour TTL. Departed names
+are tombstoned for an hour.
 
-**Name** — the display and addressing handle: set at registration by
-`--name`/`AGENTBUS_NAME`, or auto-generated by the server (`swift-otter`,
-48×48 word list). On a collision the name is automatically renamed `bob-2` and
-noted in the injected text. Names are normalized to `[a-z0-9-]{1,32}`.
+Presence is separate from activity. `working` means inside a turn; `idle` means
+alive at a prompt. Prompt/tool/turn-start events assert working, Stop/Interrupt/
+StopFailure assert idle. A working assertion older than two hours is considered
+abandoned. `who`, `peers` and the join roster show working sessions by default;
+`--all` includes idle, addressable sessions.
 
-**liveness**:
+## 5. Message model and delivery
 
-- with a PID (Linux `/proc`, starttime guards against reuse): present as long
-  as the process is alive, **idle sessions are not falsely reaped** — something
-  a TTL scheme cannot do (an idle agent triggers no hook);
-- without a PID (non-Linux / probe failed): TTL 6 hours, refreshed by any op;
-- lazy reaping: every op plus the daemon's 20s ticker, two safeguards; after
-  reaping the name goes into a **tombstone** for 1 hour, so that a new session
-  immediately reusing the name of a just-dead session cannot cause
-  misidentification.
+A message is `{messageId, from, to, kind, body, ts, replyTo, recipients,
+context}`. `context` captures the sender's cwd, repo, branch and current status
+at send time so the recipient can load only the relevant files and adjust its
+existing plan instead of restarting.
 
-**Exit**: Claude Code's `SessionEnd` hook actively calls `leave`; ZCode has no
-such event and relies on PID reaping as the fallback (immediate in testing).
-
-**activity (working vs idle)** — liveness answers "does this session still
-exist", not "is it doing anything". Harnesses multiplex many sessions into one
-long-lived process (the DSH host, the Kimi daemon), so PID liveness is
-permanent for every session that process ever created, and the DSH idle poller
-even refreshes `last_seen` every 5s. Without a second signal the roster fills up
-with finished turns, and a new session cannot tell a peer it might collide with
-from one that went to the prompt 48 hours ago.
-
-The hooks therefore report a separate state at turn boundaries — `working`
-(SessionStart is not; UserPromptSubmit / PostToolUse are) and `idle` (Stop).
-Repeated assertions of the same state only refresh presence; `state_at` stays
-at the moment that state began, so "idle since the Stop hook fired" survives
-the 5s idle poller. The daemon derives the `working` flag on every read:
-`working` assertions are trusted for at most 2h (an abandoned turn, e.g. a
-crashed host, must not look like parallel work forever), `idle` is idle, and a
-client that reports no state falls back to "seen in the last 10 minutes". The
-default roster (`who`, `peers`, the SessionStart summary) shows only working
-sessions; `--all` reveals the idle ones, which remain registered, addressable
-and wakeable by a directed request.
-
-## 5. Message model and delivery ladder
-
-A message is `{messageId, from, to, kind, body, ts, replyTo, recipients}`. Field
-names lean toward A2A's message envelope (`messageId` / `replyTo` / `kind`), so
-the HTTP boundary maps losslessly; `recipients` records how many sessions were
-actually delivered to (1 for direct, N for broadcast), letting the dashboard
-tell broadcast from direct.
-
-| kind | Semantics | Wakes an idle session |
+| kind | Meaning | May wake an idle session |
 |---|---|---|
-| `chat` (default) | ordinary conversation | no |
-| `request` | expects an answer; `agentbus ask` sends it automatically | **direct: yes**; broadcast: no |
-| `reply` | answer to a request; `replyTo` points at the original message | no |
-| `notice` | one-way notification; `agentbus notify` | no |
-| `urgent` | human interruption / urgent collaboration | **yes** |
+| `chat` | ordinary peer message | no |
+| `request` | expects an answer | direct: yes; broadcast: no |
+| `reply` | answer correlated by `replyTo` | no |
+| `notice` | one-way FYI | no |
+| `urgent` | real interruption | yes |
 
-`ask`'s reply consumption: after sending a request, the daemon's `ask` op waits
-in the caller's inbox for "the first message from the peer" and **takes it**
-(`TakeFrom`), so the reply is not delivered a second time by a later hook;
-other messages stay in the queue as they are and are still delivered by the
-ladder.
+`ask --wait N` correlates a reply by sender + `replyTo`; an empty `replyTo` is
+accepted only for backward compatibility. Notices and chat from the same peer
+are never consumed as the answer. `--wait 0` returns immediately and leaves the
+reply to normal asynchronous delivery.
 
-**Direct request wake**: a request with `to=<this session>` explicitly asks
-this peer a question; the sender usually waits inside its own turn, while the
-target may already be sitting at the prompt. Under the old urgent-only ladder
-the target waits until the user's next input, and `ask` can only time out. So
-the Stop hook's wake condition was extended to urgent + direct request, and the
-injected text gives the `agentbus reply --to …` command for each sender (marked
-"pre-authorized"). Broadcast requests still do not wake: one broadcast waking
-every idle session is both expensive and apt to become a request storm; it is
-delivered at natural boundaries, and each recipient decides by relevance
-whether to reply.
+`agentbus reply` chooses the newest addressable message from accepted history,
+the unacked inbox, or recent persisted history. Human `user` / `user-web` are
+virtual recipients backed by the dashboard/log rather than a process inbox.
 
-There is one more window Stop cannot cover: a request that arrives after the
-session has already stopped at the prompt — the host will not fire Stop again.
-The DSH native plugin, while the agent is `idle`, peeks once every 5s using the
-same Stop policy (`AGENTBUS_DSH_POLL_MS`, default 5000, 0 disables); if it
-hits urgent or a direct request, it calls `agent.steer()`. The DSH documentation
-states explicitly that steering an idle agent opens a new turn, and the message
-is acked before the steer, so it is not delivered twice. Pure-hook ZCode /
-Claude Code have no such host API and are still limited to "seeing messages
-only at the next natural boundary".
+### Delivery ladder
 
-`reply`'s target: the daemon picks the newest addressable message from the
-delivered cache, the unacked inbox (`inbox --peek`) and persisted history (an
-online peer, or the human `user`/`user-web`; sessions that have left are
-skipped), and sends it with kind=reply + replyTo. The human identity is a
-virtual recipient: messages only go into the global log/dashboard, with no
-process inbox — that lets human interruptions and dashboard messages get a
-direct reply without broadcasting. This way the injected text does not need to
-carry a long messageId, and an agent cannot fail to reply because it
-misremembered the id; when an exact match is needed,
-`send --kind reply --reply-to <id>` is still available.
-
-Delivery ladder (the lower the row, the further it intrudes into the session):
-
-| Host event | Agent state | agentbus behaviour |
+| Path | Active turn | Already idle |
 |---|---|---|
-| `SessionStart` | just started | register + inject the **session contract + roster** — telling it both "who is doing XXX" and "what these messages are and how to respond" |
-| `PostToolUse` (any tool) | working | poll: if there is mail, inject it as `additionalContext`; if not, stay silent |
-| `UserPromptSubmit` | turn start | same as above (catches up on what was missed while the user was away) |
-| `Stop` | about to go idle | **peek first**: only when the queue holds urgent or a **direct request** does `{"decision":"block","reason":…}` wake it and flush the queue; otherwise stay silent and leave the messages for the next natural boundary |
-| `SessionEnd` | exiting | `leave` (ZCode has no such event; PID reaping covers it) |
+| Claude native inbox | between tool calls, ordered | native new turn for request/urgent |
+| Kimi Server API | `POST …/steer` | idempotent `POST …/prompts` for request/urgent |
+| DSH watcher | long-poll + `agent.steer` | same for request/urgent |
+| Codex async hook | result enters the next model request | Stop invalidates the watcher; no idle wake |
+| Ordinary hooks | prompt, Pre/PostToolUse, failures | Stop continuation for request/urgent |
 
-Workspace discovery: the SessionStart roster is not one big global list but is
-presented in three groups — **the same worktree** (the same directory or a
-subdirectory of the same git worktree), **other worktrees of the same repo**
-(identical `git rev-parse --git-common-dir`), and **others**; `agentbus peers`
-can query these three groups at any time. The roster is also filtered to
-sessions currently **working** (see the activity model above) and counts idle
-ones in one line, so a new session sees from the start "who is changing the
-same files as I am" instead of a pile of sessions that finished hours ago.
-Kimi's SessionStart stdout is not injected, so its first UserPromptSubmit
-injects the same workspace roster once (injected only once per session).
+Kimi tool events are observation-only: they refresh presence and native config
+but never consume mail that stdout cannot display. `TurnStarted` covers native
+API turns and background continuations; `SessionHeartbeat` refreshes discovery.
 
-`AGENTBUS_WAKE=urgent` falls back to the old urgent-only behaviour;
-`AGENTBUS_WAKE=all` lets any message wake. A poll is an ack (a message is
-delivered once); after the ack the last 5 messages are kept for `inbox --peek`
-to reread. The injected text stays compact (see render.go) and explicitly marks
-the source and the available reply action; a direct request stresses in both
-header and footer that a reply is expected:
+Every accepted batch is retained in the five-message re-read area. Native
+acceptance and hook injection both create per-recipient receipts, visible via
+`agentbus receipt` and `/api/state`.
 
-```
-[agentbus] 1 peer message (from other agent sessions, not the user) — 1 direct request needs a reply:
-[14:32] [request] yarrow-yak→bob: starting tag-import refactor - does it overlap your filter UI work?
-[agentbus] ACTION REQUIRED — direct request needs a one-line reply (pre-authorized):
-[agentbus]   agentbus reply --to yarrow-yak "..."
-```
+## 6. Claims and failure recovery
 
-For why this framing layer is necessary, how an unprimed session handles
-injected text, and the measured record of whether agents are willing to use it,
-see [adoption.md](adoption.md).
+A native push uses this sequence:
 
-## 6. Web dashboard and A2A boundary
+1. atomically claim the currently visible batch for up to 30 seconds;
+2. push with a six-second outer timeout;
+3. on success, remove it from the inbox and record `accepted` + driver;
+4. on failure, remove the claim and record `queued` + a bounded error. A retry
+   backoff lets a normal hook deliver it meanwhile.
 
-When the daemon starts, `internal/web` listens on `127.0.0.1:8787`
-(`AGENTBUS_WEB_PORT` changes it), shares the same `*bus.Bus` as the unix
-socket, and keeps no second copy of state:
+Other polls cannot see claimed messages. A daemon restart drops claims and
+turns persisted `pushing` receipts back to `queued`, so a crash can cause a
+repeat but not a silent acknowledgement. This is at-least-once, not exactly-
+once. Native tokens are wire-only: they are passed from a hook to the daemon,
+never written to `state.json` or returned by session APIs. After a restart a
+Claude hook must refresh the token before native push resumes; queued mail is
+safe in the meantime.
 
-- `GET /`: the embedded HTML dashboard, now a two-pane chat UI. Sessions are
-  grouped by **repo → worktree** in the roster; each session gets a stable
-  avatar (agent-family hue plus name-derived offset and initials), and clicking
-  a member opens a conversation filtered to that member. The feed is
-  chronological (oldest → newest, latest at the bottom) and auto-scrolls only
-  when the reader is already near the bottom; consecutive messages collapse,
-  broadcasts carry a "broadcast" tag, and a request shows "pending reply /
-  replied" inline. Unread pending requests carry "unread N" plus a delete
-  action; the global view filters all / broadcast / direct / pending, and a
-  direct reply automatically carries replyTo. There is deliberately **no**
-  separate traffic log: it duplicated the same messages with a second scroll
-  area. All requests in the page use the relative path `./api/…`, so it needs
-  no rewriting when placed under code-server's `/proxy/8787/`;
-- `GET /api/state`, `POST /api/send`, `POST /api/delete`: the dashboard's
-  backend and a scripting entry point; `/api/send` accepts `replyTo` for the
-  dashboard's "reply" button; `/api/delete` only deletes messages that still
-  have unread copies (removing them from the unread inbox, the `mine` cache
-  and the global log) — read history cannot be rewritten; `/api/state` also
-  returns `unread: {messageId: [unread session names]}`, so the UI can tell
-  "unread / read but unanswered";
-- A2A subset: the root Agent Card,
-  `/a2a/<name>/.well-known/agent-card.json`, and JSON-RPC 2.0 `message/send` at
-  `POST /a2a/<name>` (text parts only; `metadata.agentbus.kind` maps the message
-  kind; unknown methods return `-32601`).
+## 7. Web dashboard and A2A
 
-A busy port or a listen failure is only logged and **does not affect the bus**
-(the daemon keeps serving the unix socket). `AGENTBUS_WEB=0` disables it; when
-`AGENTBUS_WEB_TOKEN` is non-empty, all three entry points require a bearer token
-uniformly (`Authorization` / `X-Agentbus-Token` / `?token=`). When binding
-fails, `status`/`doctor` show no web address.
+The loopback dashboard groups sessions by repo → worktree and shows activity,
+native drivers, broadcast/direct traffic and pending replies. It also displays
+queued/pushing/accepted receipts. “Accepted, not replied” deliberately replaces
+the old misleading “read, not replied”. Unread pending messages may be deleted;
+accepted history is immutable.
 
-## 7. MCP facade
+- `GET /api/state`, `POST /api/send`, `POST /api/delete`;
+- A2A Agent Cards and JSON-RPC `message/send` at `/a2a/<name>`;
+- all endpoints use the same bus and optional bearer-token guard;
+- a bind failure only disables the web surface, never the unix bus.
 
-`agentbus mcp` is a stdio JSON-RPC server (protocol version `2025-06-18`) with
-these tools:
+## 8. MCP facade
 
-| Tool | CLI equivalent |
-|---|---|
-| `agentbus_who` | `who` |
-| `agentbus_announce` | `announce` |
-| `agentbus_send` | `send` (including kind) |
-| `agentbus_ask` | `ask` (waits for the answer) |
-| `agentbus_inbox` | `inbox` (long-poll supported) |
+`agentbus mcp` exposes who/announce/send/ask/inbox/receipt over stdio JSON-RPC.
+It is for Harnesses without hooks; native push or lifecycle hooks are preferred
+when available because MCP tool schemas stay resident in context.
 
-It is just another client of the same daemon: identity still comes from
-`/proc` ancestry, so tool calls within one agent process share one mailbox.
-Choose it only when the harness has no hooks; otherwise the hook's "zero cost
-when idle" is strictly better (the MCP schema is permanently resident in
-context).
+## 9. Anti-storm controls
 
-## 8. Anti-storm (agents chatting each other into a loop)
+- 20 messages/minute per sender;
+- identical from/to/body suppressed for 60 seconds;
+- idle wake limited to urgent and direct requests by default;
+- replies and broadcasts do not create automatic wake loops;
+- ZCode limits Stop continuations, and the skill recommends at most three
+  exchanges per topic;
+- ordered native steering does not cancel existing tool calls.
 
-The real risk: A wakes up to reply to B, B wakes up to reply to A… Three gates:
+## 10. Reliability
 
-1. **Rate limiting**: 20 msg/min per session; going over the limit returns an
-   error (the error text suggests "pause and summarize");
-2. **Deduplication**: an identical from/to/body sent again within 60s is
-   dropped outright (also guards against the Bash tool retrying a double send);
-3. **Host limits**: ZCode's Stop continuation is capped at 3; the skill states
-   in plain text "at most ~3 round trips per topic";
-4. **Message tiers**: only urgent and a **direct request** can trigger a Stop
-   wake; chat, notice, reply and broadcast request all wait for natural
-   boundaries. Replies do not wake, so "request → reply" cannot form an
-   automatic back-and-forth; a direct request wakes only one peer, and is
-   constrained by the subsequent no-wake-on-reply rule and the ~3-turn limit.
+- first use auto-spawns the daemon under a file lock;
+- state snapshots use tmp+rename with a 300ms debounce;
+- unknown sessions silently re-register on the next hook;
+- hook failures are logged and fail open without breaking the host;
+- message body 8KB, inbox 200, accepted re-read area 5, recent log 300;
+- native push timeouts, claims and fallback are bounded;
+- `agentbus doctor`, receipts and the dashboard expose degraded delivery.
 
-## 9. Reliability
+## 11. Security model
 
-- daemon not running? any command auto-spawns it (flock prevents concurrent
-  spawns; waits up to 4s for the socket);
-- daemon crashed? `state.json` is written atomically (tmp+rename, 300ms
-  debounce), losing at most the last 300ms; session state is rebuilt
-  automatically by the next hook (a poll that receives an unknown session
-  silently re-registers);
-- any hook exception exits 0 silently (writing `$AGENTBUS_HOME/hook.log`), and
-  **never interrupts the host session**;
-- message limit 8KB, inbox 200 messages, global log 300 messages, to prevent
-  unbounded growth;
-- a Web/A2A listen failure (port in use) only writes a log and does not affect
-  the bus; a request without the token is rejected rather than silently
-  allowed.
+AgentBus is a single-user trusted bus. The unix socket is 0600; any process with
+the same uid is trusted at approximately ssh-agent level. HTTP binds loopback
+by default and can require `AGENTBUS_WEB_TOKEN`. Claude/Kimi native credentials
+stay on loopback, are never included in logs/state/session APIs, and custom
+Kimi URLs must be loopback HTTP.
 
-## 10. Security model
+Peer messages are coordination notes, not user authorization. They cannot
+approve permissions, rewrite Harness configuration, or justify destructive /
+out-of-scope work. Sender names are collaboration handles, not cryptographic
+identities.
 
-A single-user trusted bus: unix socket 0600, no authentication (any process with
-the same uid can read and write; trust at the same level as ssh-agent). The HTTP
-surface binds only to `127.0.0.1` by default and is not exposed to the outside
-network; when needed, add a bearer token with `AGENTBUS_WEB_TOKEN` (validated
-uniformly by the dashboard, API and A2A). Sender names are not strongly
-authenticated — a name is a collaboration handle, not a security boundary; the
-documentation says so explicitly. Cross-machine and multi-user are v2 topics
-(TCP + token auth).
+## 12. Integration matrix
 
-## 11. Integration matrix
-
-| Agent | Integration | Delivery timing |
+| Agent | Integration | Active / idle delivery |
 |---|---|---|
-| Claude Code | hooks + skill, or the plugin bundle | roster / while working / turn start / idle wake / exit cleanup |
-| ZCode | hooks + skill (the config needs `hooks.enabled:true`; the plugin bundle includes it and needs no switch), or the plugin bundle | same as above except exit (PID reaping) |
-| DSH | native Cordis plugin (`integrations/dsh/plugin`) | roster/contract, turn boundaries, after tool calls; urgent / direct request wake via an `agent.turn-stopping` steer; an idle agent is woken by a 5s poll steer |
-| Kimi / others | skill only, or `agentbus mcp` (identity via `/proc` ancestry) | pull: who/announce/inbox (`--wait` long-poll) |
-| Human / external systems | Web dashboard, `/api/send`, A2A `message/send` | dashboard real time; A2A returns synchronously |
+| Claude Code | native inbox + hooks + skill, or plugin hooks | native between tool calls / request wake; hooks fallback |
+| Kimi Code | Server API + lifecycle hooks + AGENTS.md + skill | steer / idempotent prompt; hooks fallback |
+| DSH | native Cordis plugin + watcher | long-poll steer / request wake |
+| Codex | lifecycle hooks + async watcher | next model request / no wake after Stop |
+| ZCode | config hooks or plugin bundle | next safe hook / no wake after Stop |
+| Human / external | dashboard, HTTP, A2A, MCP | immediate bus write; delivery depends on target |
 
-## 12. Failure modes and behaviour
+## 13. Failure modes
 
 | Scenario | Behaviour |
 |---|---|
-| daemon killed | the next command or hook auto-spawns it; state.json recovers |
-| agent terminal closed (SIGKILL) | PID reaping; the name is tombstoned for 1h; unread messages expire with the inbox |
-| two sessions with the same name | the later one automatically gets a `-2` suffix and is told |
-| peer does not exist | error + did-you-mean suggestion |
-| hook outputs invalid JSON | cannot happen: fixed template, zero output for an empty result |
-| dashboard port in use | logged only; the bus and hooks run as usual; `status` shows no web address |
-| A2A unknown method | JSON-RPC `-32601`, connection stays open |
-| `ask` gets no answer | exit code 1 + hint that the peer may be busy or have no hooks installed; the answer can be fetched later with `inbox --peek`; the session is not blocked |
-| `reply` has no peer to reply to | explicit error suggesting `send <name>` instead; it will not misdeliver to the human or to a session that has left |
-| MCP client sends a notification | no id → ignored (JSON-RPC semantics) |
+| native API unavailable | queued receipt with error, bounded retry, hook fallback |
+| daemon killed | restart restores state; claims reset to queued |
+| Harness closed | PID/TTL reaping and name tombstone |
+| duplicate integration | claims/ack prevent native-vs-hook duplicates; avoid installing two hook bundles |
+| `ask` times out | exit 1 and continue; late reply stays available |
+| `ask --wait 0` | success once queued; answer is asynchronous |
+| web port busy | web only is disabled |
 
-## 13. Future directions
+## 14. Future directions
 
-- make "session adoption rate" an observable metric (announce coverage, request
-  reply rate, urgent misuse rate), and use it to tune the wording of the
-  session contract and the skill;
-- channels/topics (`#frontend`) and worktree-aware conflict hints (automatic
-  reminders for different branches of the same repo);
-- cross-machine TCP + token auth (reusing the validation approach of
-  `AGENTBUS_WEB_TOKEN`);
-- message search and history replay in the dashboard (currently only the latest
-  300 entries of the ring log).
+- processing acknowledgements richer than reply/pending state;
+- adoption and delivery-latency metrics;
+- channels/topics and stronger worktree conflict hints;
+- cross-machine transport with real authentication;
+- searchable history beyond the 300-message ring.

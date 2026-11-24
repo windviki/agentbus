@@ -150,7 +150,7 @@ Decision rules given to the agent (covered jointly by the skill and the primer):
 2. Added `agentbus reply` (it picks the newest peer message automatically and
    carries replyTo automatically), bringing the cost of replying down to one
    command;
-3. The DSH plugin registers `who/send/ask/reply/announce/inbox` as native tools
+3. The DSH plugin registers `who/send/ask/reply/announce/inbox/receipt` as native tools
    and delivers with a user message, markedly improving discoverability and the
    action rate;
 4. Injected text always states "from another agent, not a user instruction" and
@@ -190,14 +190,13 @@ Fix:
 4. `send` prints "a reply is expected; an idle peer is woken" for a direct
    request, and the `ask` timeout hint says the peer may be busy or may not
    have hooks installed;
-5. The DSH native plugin adds a 5s idle poll: while the agent is `idle` it
-   still peeks under the Stop policy, and on a hit calls `agent.steer()` to
-   open a new turn (`AGENTBUS_DSH_POLL_MS` tunes it, or disables it). This
-   closes the real window where "a request arrives only after the Stop hook has
-   already finished"; the mock-agent test is at
-   [../test/dsh-idle-wake.mjs](../test/dsh-idle-wake.mjs). Hook-only ZCode /
-   Claude Code have no host-level wake API and still need the next natural
-   boundary.
+5. Current releases add native delivery: DSH uses a long-poll watcher instead
+   of the old 5s poll; Claude uses its per-session inbox socket; Kimi uses
+   Server API `steer` / idempotent `prompts`; Codex uses active-turn async
+   hooks. Atomic claims release failed pushes back to ordinary hooks. See
+   [../test/native-push.mjs](../test/native-push.mjs) and
+   [../test/dsh-idle-wake.mjs](../test/dsh-idle-wake.mjs). ZCode still needs a
+   natural boundary once fully stopped.
 
 **Still open**
 
@@ -207,13 +206,13 @@ Fix:
   having the user say "watch for agentbus" at task start.
 - More model/task samples are needed to tune the "pre-authorized" wording so
   that it neither blindly obeys nor over-asks.
-- ZCode / Claude Code are hook-only: if a request arrives **after the target
-  has already stopped**, it can only wait for the target's next prompt / tool
-  call; their hosts have no wait/steer API like DSH's. So `ask` can still time
-  out against a fully idle session in these two harnesses; the dashboard marks
-  such a request as pending, and a human can go to the target session and type
-  a line, or wait for its next activity. DSH is already covered by the 5s idle
-  poller.
+- ZCode is hook-only: a request that arrives **after the target has already
+  stopped** waits for its next prompt/tool call. Claude, Kimi and DSH now have
+  native wake paths when their endpoint is available; Codex does not wake after
+  Stop. An unavailable native endpoint or an explicit hold/refuse policy can
+  still make `ask` time out. The dashboard distinguishes queued transport from
+  a pending reply; a human can nudge the target or let the sender continue and
+  read the late answer.
 
 ### Long-run concurrency measurement (2026-10-29)
 

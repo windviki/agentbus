@@ -1,134 +1,61 @@
 # ZCode integration
 
-ZCode supports the same hook events as Claude Code (`SessionStart`,
-`UserPromptSubmit`, `PostToolUse`, `Stop` — but **no** `SessionEnd`), with two
-ZCode specifics: configuration-file hooks live under `hooks.events.*` in
-`~/.zcode/cli/config.json` and **must** be enabled with `hooks.enabled: true`.
-Plugin hooks (`hooks/hooks.json`) register themselves and need no flag.
+ZCode uses lifecycle hooks: `SessionStart`, `UserPromptSubmit`, `PreToolUse`,
+`PostToolUse`, `PostToolUseFailure`, and `Stop`. It has no `SessionEnd`; PID
+liveness handles exit. Config hooks live under `hooks.events.*` and require
+`hooks.enabled: true`; plugin hooks register themselves.
 
-## 1. Install and wire (automated)
+## Install
 
 ```bash
 npm install -g agentbus-cli
 agentbus setup --agents zcode
 ```
 
-From a source checkout use `./scripts/install.sh --agents zcode` instead. The
-setup step installs the skill to `~/.agents/skills/agentbus/` (ZCode scans that
-shared directory; it is not copied to `~/.zcode/skills` to avoid a duplicate
-catalog entry), and merges the four hook events into
-`~/.zcode/cli/config.json` with `hooks.enabled: true` (the previous file is kept
-as `config.json.agentbus-bak`). Open a new ZCode session afterwards; running
-sessions do not reload hooks.
+Or from source: `./scripts/install.sh --agents zcode`. Setup installs the skill
+to `~/.agents/skills/agentbus/` (no duplicate under `~/.zcode/skills`), merges
+all six events into `~/.zcode/cli/config.json`, enables hooks, and backs up the
+original. Open a new ZCode session afterwards.
 
-## 2. Alternatives (pick ONE)
-
-### A. Plugin bundle (source checkout)
+### Plugin alternative (choose one)
 
 ```bash
-./scripts/install.sh --plugin     # refreshes the bundled skill, prints paths
+./scripts/install.sh --plugin
 ```
 
-In ZCode: **Settings → Plugin Management → add local marketplace**
-`<agentbus repo>/integrations/zcode`, then install `agentbus`. The bundle
-declares `.zcode-plugin/plugin.json` plus `hooks/hooks.json`, so the hook
-runner is enabled automatically.
+In ZCode open **Settings → Plugin Management → add local marketplace** and
+choose `<agentbus repo>/integrations/zcode`, then install `agentbus`. Do not
+combine the plugin with config-file hooks. The manual fragment is
+[hooks.json](../../integrations/zcode/plugin/hooks/hooks.json).
 
-### B. Merge the hooks into config.json
+## Delivery and identity
 
-Merge into `~/.zcode/cli/config.json` (user scope) or
-`<repo>/.zcode/config.json` (workspace scope):
+- Prompt and Pre/PostToolUse events deliver queued mail as additional context;
+  failures use the same path. Empty events emit nothing.
+- `Stop` can continue up to three times for urgent/direct requests. Chat,
+  notice, reply and broadcast requests do not wake idle sessions.
+- If ZCode has already stopped, no hook fires and there is no native wake API;
+  mail waits for the next prompt/tool event. Claude/Kimi/DSH have native paths,
+  and Codex has an active-turn async watcher, but fully idle behavior differs
+  by Harness.
+- `${CLAUDE_SESSION_ID}` is available in hooks. Bash does not receive a session
+  id, so AgentBus resolves the hook-recorded pid→sid map through `/proc`
+  ancestry. No manual `--session` is needed.
+- `SessionStart` injects the session contract (`AGENTBUS_PRIMER=0` opts out).
+- The dashboard is at `http://127.0.0.1:8787/` by default;
+  `agentbus status` prints the actual URL.
 
-```json
-{
-  "hooks": {
-    "enabled": true,
-    "events": {
-      "SessionStart": [
-        { "hooks": [ { "type": "command", "command": "agentbus hook", "timeoutMs": 15000 } ] }
-      ],
-      "UserPromptSubmit": [
-        { "hooks": [ { "type": "command", "command": "agentbus hook", "timeoutMs": 5000 } ] }
-      ],
-      "PostToolUse": [
-        { "hooks": [ { "type": "command", "command": "agentbus hook", "timeoutMs": 5000 } ] }
-      ],
-      "Stop": [
-        { "hooks": [ { "type": "command", "command": "agentbus hook", "timeoutMs": 5000 } ] }
-      ]
-    }
-  }
-}
-```
+## Headless verification and troubleshooting
 
-Or run `agentbus setup --agents zcode` to merge automatically (backs up first).
-**Do not combine A and B** — every message would be delivered twice.
+The historical live verification (2026-10-29, ZCode 3.15/3.16) confirmed
+registration, request injection and a correctly correlated `agentbus reply`.
+A bare `zcode -p` may report `Select a model before sending a message` when the
+standalone CLI cannot see the desktop provider; that is unrelated to AgentBus.
 
-Notes:
+ZCode may schedule several tools from one assistant message with limited
+concurrency. If an `agentbus send` Bash call is pending behind a long Agent or
+SendMessage part, the OS process has not started and nothing has reached the
+bus. Wait for the running tool or send in a separate turn; this is Harness
+scheduling, not a daemon stall.
 
-- ZCode's `Stop` hook may request continuation up to three times per stop,
-  which conveniently bounds any wake-up loop.
-- An idle session is woken by `urgent` and by a `request` addressed directly
-  to it **if the Stop hook still fires**; chat / notice / reply and broadcast
-  requests wait for the next prompt or tool call. Reply with `agentbus reply
-  "..."` (or `agentbus send <name> ...` for a specific peer).
-  `AGENTBUS_WAKE=urgent` restores the old urgent-only behaviour.
-- Limitation: if ZCode has **already stopped at the prompt** when a request
-  arrives, no hook runs and the message stays queued until the next prompt or
-  tool call. ZCode exposes no host-level wake API, so `agentbus ask` can time
-  out against a fully idle ZCode session. The dashboard shows it as a pending
-  request; a human can nudge the session, or the peer can continue and read the
-  answer later with `agentbus inbox --peek`. DSH's native plugin does have an
-  idle steer path, so DSH targets wake within ~5s.
-- `${CLAUDE_SESSION_ID}` is injected as an environment variable in hooks —
-  `agentbus hook` picks it up automatically.
-- Liveness: ZCode's node process is detected via `/proc` ancestry; exit ⇒
-  session reaped without any explicit logout (no `SessionEnd` event exists).
-- The `SessionStart` hook injects the session contract by default
-  (`AGENTBUS_PRIMER=0` opts out); the rationale is in
-  [../adoption.md](../adoption.md).
-- The dashboard is available at `http://127.0.0.1:8787/` (behind code-server:
-  `/proxy/8787/`); `agentbus status` prints the actual URL.
-
-## Identity from the Bash tool
-
-ZCode does not export the session id to Bash tool subprocesses, so
-`agentbus send/reply` run by the agent would otherwise look like a human
-("user"). The hook records `agent process pid -> sid` under
-`$AGENTBUS_HOME/pidmap/` on every event; CLI commands resolve their identity by
-walking back to that ancestor process and reading the map (pid start time
-guards against reuse). Verified end to end: a request sent to a live ZCode
-session was delivered by hooks, and the agent's `agentbus reply` appeared as
-`zprobe3→zpeer: z-ack-9` with the correct `replyTo`.
-
-## Verification and a headless caveat
-
-What was verified on this machine (2026-10-29, ZCode 3.15/3.16 desktop bundle):
-
-- `zcode -p` session registers as a live `zcode` session and shows up in
-  `agentbus who`;
-- a peer `request` queued while the session runs is injected, and the model
-  replies through `agentbus reply`;
-- a neutral task ("create notes.txt") still made the model inspect the
-  directory and reason about the peer session it saw in the injected roster.
-
-Caveat: a **bare** `zcode -p` process may print `Select a model before sending
-a message` even though the desktop app has a model. That is a CLI limitation:
-the desktop account provider is not visible to the standalone CLI unless a
-model/provider selection is available to it. It does not affect desktop
-sessions (they supply the selection) and it is unrelated to agentbus. For
-headless smoke tests you can temporarily enable the API-key provider in
-`~/.zcode/v2/provider_config.json` (and restore it afterwards).
-
-## Troubleshooting: a Bash tool call stays "pending"
-
-ZCode may run several tools emitted in one assistant message with limited
-concurrency. If a `agentbus send ...` Bash call shows `pending` while its
-session still has `Agent` / `SendMessage` parts in `running` state, the command
-has **not started** yet — there is no OS process for it and nothing reaches the
-daemon. `agentbus send` itself completes in a few milliseconds once it runs.
-
-Diagnosis: check the session's tool parts (e.g. in the ZCode session DB) for
-other running tool calls from the same message; if one is a long subagent, wait
-for it (or interrupt the turn) and send the status in a separate turn. This is
-ZCode's tool scheduling, not an agentbus stall.
+Official reference: [ZCode hooks](https://zcode.z.ai/en/docs/hooks).

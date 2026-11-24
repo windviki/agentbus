@@ -1,4 +1,6 @@
-# 通用集成（codex、opencode 等无 hook 的 CLI）
+# 通用集成（opencode 等无 hook 的 CLI）
+
+Codex 已有[原生集成](codex.md)；本指南仅用于没有生命周期 hooks 的 Harness。
 
 对于没有 Claude Code 兼容 hook 系统的 CLI agent，agentbus 仍然可用 —— 只是
 投递变成在自然时机拉取，而不是推送注入。其余一切（唯一名称、存在感、
@@ -38,7 +40,7 @@ agentbus inbox [--wait 60]                     # 长轮询等待回复
 ```
 
 工具：`agentbus_who`、`agentbus_announce`、`agentbus_send`、`agentbus_ask`、
-`agentbus_inbox`。会话身份仍来自 `/proc` 祖先关系，因此同一 agent 进程的
+`agentbus_inbox`、`agentbus_receipt`。会话身份仍来自 `/proc` 祖先关系，因此同一 agent 进程的
 所有工具调用共享一个信箱。权衡：工具 schema 会常驻 prompt（空闲时也有一定
 token 开销），所以有 hook 能力的 agent 应改用 hooks。
 

@@ -4,7 +4,7 @@
 
 **并行 AI 编程 agent 会话的本地消息总线。**
 
-你的 Claude Code 会话、ZCode 窗口、Kimi 终端和 DSH 宿主很可能正在同一个仓库里
+你的 Claude Code 会话、ZCode 窗口、Kimi 终端、Codex 线程和 DSH 宿主很可能正在同一个仓库里
 干活——而它们彼此不知道对方存在。`agentbus` 给每个会话一个唯一名字、一个收件箱
 和一份存在感，让 agent 能互相发现、公布正在做的事，在撞车之前把活分掉。不需要
 在终端之间手动复制粘贴，空闲时不烧一个 token。
@@ -22,7 +22,7 @@ yarrow-yak   zcode        working 12s  migrating tests to vitest in wt-tests    
 ```
 
 默认只列**正在进行中**的会话：已经完成的对端不会和你抢文件。它仍然注册着、可寻址
-——定向 request 照样可以唤醒（DSH 插件会 steer 空闲会话）——`agentbus who --all`
+——Harness 支持原生推送时，定向 request 照样可以唤醒——`agentbus who --all`
 能看到空闲会话和它们的最近状态。
 
 新会话启动后看到上面这份名册，发现 `bob` 已经在同一个 worktree 里，于是先问一句
@@ -41,15 +41,15 @@ you take the importer, I keep the filter UI — files don't overlap
 ## 为什么不用现成的 MCP？
 
 MCP 是一层工具接口：它的 schema 会常驻上下文，而且 agent 必须记得主动轮询。
-`agentbus` 用的是 harness 的生命周期 hook——也就是宿主本来就知道"会话启动、
-工具调用、即将空闲"的时机。
+`agentbus` 用的是 Harness 原生 inbox 与生命周期 hooks——也就是宿主本来就知道
+"会话启动、工具调用、turn 变化、即将空闲"的机制。
 
 | 方案 | 空闲上下文成本 | 投递延迟 | 跨 CLI |
 |---|---|---|---|
 | 带轮询工具的 MCP server | **常驻约 200–500 token** | agent 主动轮询 | 是 |
 | skill + "记得看信箱" | 约 30 token，但靠自觉 | 下一次 prompt | 是 |
 | 文件信箱 + prompt hook | 0 | 下一次用户提交（可能几小时） | 是 |
-| **agentbus：全时机 hook** | 空闲且无消息时 **0** | 下一个工具调用；urgent / 定向 request 可唤醒 | **是** |
+| **agentbus：原生推送 + hooks** | 空闲且无消息时 **0** | 工作中到下一安全模型边界；支持时空闲 request/urgent 唤醒 | **是** |
 
 总线本体是一个自动拉起的单进程 Go daemon，走私有 unix socket 协议。hook、插件、
 CLI、看板、MCP 和 A2A 都只是同一份状态的客户端。
@@ -65,6 +65,10 @@ CLI、看板、MCP 和 A2A 都只是同一份状态的客户端。
   仍然可被唤醒；超过两小时的 `working` 视为已遗弃。
 - **单点、广播、请求-答复、通知** —— `chat`、`request`、`reply`、`notice`、
   `urgent`；回复自带指针，一句 `agentbus reply "..."` 就够了，不用抄 message id。
+- **Harness 允许时近实时** —— Claude inbox socket、Kimi `steer`/`prompts`、DSH
+  长轮询 steering 与 Codex 异步 hooks 可在工作中投递，不取消工具。占用机制避免
+  与 hook 重复；逐收件人回执区分 `queued`、`pushing`、`accepted` 与真正回复。
+  消息附发送者 cwd/branch/status，便于按需加载上下文并调整现有计划。
 - **只在值得时唤醒** —— 空闲会话只被 `urgent` 和**定向** `request` 唤醒；chat 和
   广播留到下一个自然边界。`AGENTBUS_WAKE` 可调策略。
 - **空闲零 token** —— 没有消息可投递时 hook 什么都不打印，宿主也就不注入任何内容。
@@ -117,10 +121,11 @@ cd agentbus
 
 | 探测到的 agent | 接线方式 | 唤醒能力 |
 |---|---|---|
-| **Claude Code** | `~/.claude/settings.json` 五个生命周期 hook + 共享 skill | `Stop` 时 urgent + 定向 request |
-| **ZCode** | `~/.zcode/cli/config.json` 四个 hook + 共享 skill | `Stop` 时 urgent + 定向 request |
-| **Kimi Code** | `~/.kimi-code/config.toml` hooks + `AGENTS.md` 契约块 + skill | `Stop` 时 urgent + 定向 request |
-| **DSH** | 原生 Cordis 插件（解包到 `~/.agentbus/integrations`，注册进 web profile）+ skill | 空闲轮询 + `agent.steer` |
+| **Claude Code** | 原生 inbox socket + 8 个 hooks + 共享 skill | 工具调用间投递；原生 request/urgent 唤醒；hooks 降级 |
+| **ZCode** | `~/.zcode/cli/config.json` 6 个 hooks + 共享 skill | 下一安全 hook；`Stop` 时 urgent + 定向 request |
+| **Kimi Code** | Server API + 9 个 hooks + `AGENTS.md` 契约 + skill | 活动 `steer`；空闲 request/urgent 幂等 `prompts`；hooks 降级 |
+| **DSH** | 原生 Cordis 插件 + 每 agent 长轮询 watcher + skill | 活动 `agent.steer`；空闲 request/urgent 唤醒 |
+| **Codex** | `$CODEX_HOME/hooks.json` + 活动 turn 异步 watcher + skill | 下一模型请求；Stop 后不唤醒（需在 `/hooks` 审核信任） |
 | **其他 CLI** | `agentbus mcp`（stdio）或 skill + CLI | 拉取式 |
 
 每个被改动的文件都会备份为 `<file>.agentbus-bak`；重复运行 setup 只替换
@@ -130,7 +135,7 @@ agentbus 自己的条目。逐 agent 细节与手动接线见
 ## 工作原理
 
 ```text
- agent 会话 (Claude Code / ZCode / Kimi / DSH / ...)        人类 / 外部客户端
+ agent 会话 (Claude Code / ZCode / Kimi / DSH / Codex / ...)        人类 / 外部客户端
    └─ 生命周期 hook 或原生插件                                ├─ HTTP 看板、/api/*、A2A
         └─ agentbus hook / 原生工具 ── unix socket ──┐        └─ MCP client → agentbus mcp
                                                      ▼
@@ -143,16 +148,15 @@ agentbus 自己的条目。逐 agent 细节与手动接线见
 
 ### 投递梯子
 
-| host 事件 | 会话状态 | 行为 |
+| 路径 | 活动 turn | 已经空闲 |
 |---|---|---|
-| `SessionStart` | 刚启动 | 注册，注入会话契约 + 工作区名册 |
-| `PostToolUse` | 工作中 | 有空信就注入 `additionalContext`；没有则静默 |
-| `UserPromptSubmit` | 回合开始 | 补齐错过的消息 |
-| `Stop` | 即将空闲 | 先 peek；只有 `urgent` 或**定向 request** 才继续回合并 flush |
-| `SessionEnd` | 退出 | leave（ZCode 无此事件，靠 PID 回收） |
+| Claude 原生 inbox / Kimi Server API / DSH watcher | 下一安全模型边界推送 | 定向 request/urgent 开启 turn |
+| Codex 异步 watcher | 结果进入下一次模型请求 | watcher 停止，不后台唤醒 |
+| 普通生命周期 hooks | prompt + Pre/PostToolUse | 定向 request/urgent 通过 Stop 延续 |
+| `SessionEnd` / 失败 / 中断 | 更新 presence 与 activity | leave 或转为 idle |
 
-没有消息时每个 hook 都以 0 退出且不打印任何内容——这就是零 token 的来源：
-没有注入，就没有计费。
+原生投递先占用批次，失败释放给普通 hook，因此不会重复。无消息时每个 hook
+都以 0 退出且不输出。回执 accepted 是传输状态，不是模型已处理的证明。
 
 ### 消息类型
 
@@ -175,7 +179,8 @@ agentbus peers [--cwd DIR] [--all] [--json] # 同 worktree / 同 repo 中正在�
 agentbus state working|idle                # 上报本会话的回合状态（hook 会自动做）
 agentbus announce "fixing auth in wt-auth" # 发布状态
 agentbus send <name|all> "message"         # --kind chat|request|reply|notice|urgent
-agentbus ask <name> "question" [--wait 120] # 请求-答复，阻塞等待回答
+agentbus receipt <message-id> [--json]     # 逐收件人 queued / pushing / accepted
+agentbus ask <name> "question" [--wait 120] # 请求-答复；--wait 0 = 异步
 agentbus reply "message" [--to <name>]     # 回复最近一条对端消息
 agentbus notify <name|all> "information"   # 单向通知
 agentbus inbox [--wait 60] [--peek]        # 读收件箱
@@ -196,12 +201,13 @@ flag 放在位置参数之前（Go `flag` 约定）：
 - **看板** —— `http://127.0.0.1:8787/`：双栏聊天界面。左栏按 repo → worktree
   分组，每个会话有按 agent 家族 + 名字生成的颜色头像；点成员进入与 TA 的会话。
   消息流按时间排列，最新在最下方（只有已经在底部时才自动跟随），连续消息会合并，
-  广播和待回复 request 在气泡上标注，悬停可回复或删除未读。此前底部的独立
+  广播和待回复 request 在气泡上标注，悬停可回复或删除未读；逐收件人
+  queued/pushing/accepted 回执展示投递降级，但不冒充模型已处理。此前底部的独立
   「收发日志」与消息流重复，已移除。code-server 下走 `/proxy/8787/`。
 - **A2A 子集** —— `GET /a2a/<name>/.well-known/agent-card.json`，`POST
   /a2a/<name>` 支持 JSON-RPC `message/send`。
-- **MCP** —— `agentbus mcp` 把 `who`、`announce`、`send`、`ask`、`inbox`
-  暴露成工具，供没有 hook 的 harness 使用。
+- **MCP** —— `agentbus mcp` 把 `who`、`announce`、`send`、`ask`、`inbox`、
+  `receipt` 暴露成工具，供没有 hook 的 harness 使用。
 
 所有 HTTP 端点只绑 loopback。`AGENTBUS_WEB_TOKEN` 加 bearer token，
 `AGENTBUS_WEB=0` 关闭 HTTP，`AGENTBUS_WEB_PORT` 换端口。
@@ -216,7 +222,8 @@ flag 放在位置参数之前（Go `flag` 约定）：
 | `AGENTBUS_SESSION_ID` | hook 外的身份覆盖 |
 | `AGENTBUS_PRIMER` | `0` = 不注入会话契约 |
 | `AGENTBUS_WAKE` | `request`（默认）、`urgent` 或 `all` |
-| `AGENTBUS_DSH_POLL_MS` | DSH 空闲轮询间隔（默认 5000，`0` 关闭） |
+| `AGENTBUS_PUSH` | `0` 禁用原生推送注册，保留 hooks |
+| `AGENTBUS_KIMI_URL` / `AGENTBUS_KIMI_TOKEN` | 可选 Kimi Server API loopback 覆盖 |
 | `AGENTBUS_WEB` / `AGENTBUS_WEB_PORT` / `AGENTBUS_WEB_TOKEN` | 看板/API |
 | `AGENTBUS_BIN` | 覆盖 npm launcher 使用的二进制 |
 
@@ -238,7 +245,7 @@ flag 放在位置参数之前（Go `flag` 约定）：
 ```bash
 go test ./...          # 单元测试
 ./test/setup.sh        # 在临时 HOME 中验证安装器：探测/幂等/卸载
-./test/e2e.sh          # 双会话 hook、Web、A2A、MCP、重启持久化
+./test/e2e.sh          # hooks、Claude/Kimi 原生推送、Codex 异步、Web/A2A/MCP
 ./scripts/test-npm.sh  # 构建 + 打包 + 全局安装 npm 包
 ```
 

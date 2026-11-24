@@ -26,7 +26,8 @@
 | [integrations/claude-code.md](integrations/claude-code.md) | Claude Code：hooks 或插件包 |
 | [integrations/zcode.md](integrations/zcode.md) | ZCode：配置 hooks 或插件包 |
 | [integrations/dsh.md](integrations/dsh.md) | DSH：原生插件（会话注入 + 工具） |
-| [integrations/kimi.md](integrations/kimi.md) | Kimi Code：hooks + 全局 AGENTS.md + skill |
+| [integrations/kimi.md](integrations/kimi.md) | Kimi Code：Server API + hooks + 全局 AGENTS.md + skill |
+| [integrations/codex.md](integrations/codex.md) | Codex：生命周期 hooks + 活动 turn 异步投递 |
 | [integrations/generic.md](integrations/generic.md) | 其他 CLI：skill 或 MCP |
 
 ## 维护约定

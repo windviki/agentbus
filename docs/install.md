@@ -69,6 +69,7 @@ The script accepts the same setup flags, plus a few convenience aliases:
 ./scripts/install.sh --zcode-hooks      # = --agents zcode
 ./scripts/install.sh --kimi-hooks       # = --agents kimi
 ./scripts/install.sh --dsh-plugin       # = --agents dsh
+./scripts/install.sh --codex-hooks      # = --agents codex
 ./scripts/install.sh --dry-run
 ./scripts/install.sh --uninstall
 ./scripts/install.sh --plugin           # repo plugin bundles only
@@ -82,7 +83,7 @@ AGENTBUS_BIN_DIR="$HOME/bin" ./scripts/install.sh
 
 ## What `agentbus setup` does
 
-1. **Detects** Claude Code, ZCode, Kimi Code, DSH and generic skill support by
+1. **Detects** Claude Code, ZCode, Kimi Code, DSH, Codex and generic skill support by
    checking config directories and `PATH`.
 2. **Asks** which detected agents to wire (or accepts `--yes` / `--agents`).
 3. **Installs the skill** to `~/.agents/skills/agentbus/SKILL.md` (shared by
@@ -101,7 +102,7 @@ untouched. That also means it is safe to run after an upgrade.
 |---|---|
 | *(none)* | interactive picker; default selects every detected agent |
 | `--yes`, `-y` | non-interactive, wire every detected agent |
-| `--agents <list>` | comma list: `claude,zcode,kimi,dsh`, or `all` / `none` |
+| `--agents <list>` | comma list: `claude,zcode,kimi,dsh,codex`, or `all` / `none` |
 | `--dry-run` | print the plan; write nothing (combines with `--uninstall` to preview removal) |
 | `--uninstall` | remove agentbus hooks, blocks, plugin and skill |
 | `--no-skill` | skip skill installation |
@@ -111,15 +112,17 @@ untouched. That also means it is safe to run after an upgrade.
 
 | Agent | Files | Notes |
 |---|---|---|
-| Claude Code | `~/.claude/settings.json` | SessionStart, UserPromptSubmit, PostToolUse, Stop, SessionEnd → `agentbus hook` |
-| ZCode | `~/.zcode/cli/config.json` | same events except SessionEnd; sets `hooks.enabled: true` |
-| Kimi Code | `~/.kimi-code/config.toml`, `~/.kimi-code/AGENTS.md`, skill | managed TOML block between `# >>> agentbus` / `# <<< agentbus`; the contract goes between `<!-- agentbus:begin -->` markers |
-| DSH | `~/.agentbus/integrations/dsh-plugin`, DSH web profile | extracts the native Cordis plugin and registers it with `dsh plugin --profile web add` when `dsh` is on `PATH`; otherwise it prints the manual command |
+| Claude Code | `~/.claude/settings.json` | native inbox + SessionStart, prompt, Pre/PostToolUse(+Failure), Stop(Failure), SessionEnd |
+| ZCode | `~/.zcode/cli/config.json` | six lifecycle events; sets `hooks.enabled: true`; no SessionEnd |
+| Kimi Code | `~/.kimi-code/config.toml`, `~/.kimi-code/AGENTS.md`, skill | Server API + nine lifecycle events; managed TOML and instruction blocks |
+| DSH | `~/.agentbus/integrations/dsh-plugin`, DSH web profile | native plugin + long-poll watcher; registers with `dsh plugin --profile web add` when available |
+| Codex | `$CODEX_HOME/hooks.json` | lifecycle hooks + async active-turn watcher; review and trust entries in `/hooks` |
 | Any other CLI | skill / MCP | `agentbus mcp` or load the skill; see [integrations/generic.md](integrations/generic.md) |
 
 The manual path for each agent remains available in the integration guides
 ([Claude Code](integrations/claude-code.md), [ZCode](integrations/zcode.md),
-[Kimi](integrations/kimi.md), [DSH](integrations/dsh.md)).
+[Kimi](integrations/kimi.md), [DSH](integrations/dsh.md),
+[Codex](integrations/codex.md)).
 
 ## Verify
 

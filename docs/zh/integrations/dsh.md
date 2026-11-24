@@ -1,116 +1,64 @@
 # DSH（DeepSeek Harness）集成
 
-DSH 是一个基于 Cordis 的 harness：插件是 Node 包，可以挂接 agent 生命周期
-事件并注册工具。内置插件
-[`integrations/dsh/plugin`](../../../integrations/dsh/plugin) 是同一个 daemon 的
-瘦客户端 —— 它不重新实现总线，而是调用 `agentbus hook` / CLI，把结果映射到
-DSH 的原生事件上。跨 CLI 协调依然成立，因为 daemon 位于任何单一 harness 之外。
+原生 Cordis 插件把 DSH 生命周期事件映射到共享 daemon，并为每个存活 agent 启动一个
+长轮询 watcher，不另建总线。
 
-## 映射关系
+## 事件映射
 
-| DSH 事件 | agentbus 等价物 | 效果 |
-|---|---|---|
-| `agent/created` | `agentbus hook` SessionStart | 注册会话；以用户消息（`agent.inject`）注入会话契约 + **按工作区分组的名册**（同一工作区 / 同一仓库） |
-| `agent/pre-step` | UserPromptSubmit | 在下一个步骤边界投递排队消息 |
-| `tools/post-execute` | PostToolUse | 在同一步骤内、工具调用之后立即投递消息 |
-| `agent/turn-stopping` | Stop | 若有 **urgent** 消息或直接发给本会话的 request 待处理，就对会话执行 `agent.steer`，让回合继续；chat/notice/广播 request 继续排队。同时把会话标为 `idle` |
-| `agent/disposed` | `leave` | 将会话从总线上移除 |
+| DSH 事件/路径 | AgentBus 行为 |
+|---|---|
+| `agent/created` | 注册；注入契约 + 工作区名册；启动 watcher |
+| `agent/pre-step` | 标记 working；在步骤边界投递 |
+| `tools/post-execute` | 工具结果后立即注入 |
+| `agent/turn-stopping` | 标记 idle；urgent/定向 request 时 steer |
+| 每 agent watcher | 30 秒长轮询；活动 turn 立即 steer，空闲仅 urgent/定向 request 唤醒 |
+| `agent/disposed` | leave 并停止 watcher |
 
-两条 Stop 路径——真实回合结束和下面的 5s 空闲轮询——都上报 `idle`，
-`agent/pre-step` 上报 `working`。正因如此，`agentbus who` 只会在 DSH 会话真正
-干活时列出它，而 `agentbus who --all` 仍能看到它处于空闲、可被唤醒。
+活动 watcher 使用 `active_only`，Stop 会使未完成 watch 失效，避免它继续消费空闲
+消息。空闲 watcher 使用 `wake_only`，普通 chat/notice 不会造成忙循环或新 turn。
+watcher 与生命周期 hooks 的收件箱 ack 是原子的，避免重复投递。旧的 5 秒空闲轮询
+及 `AGENTBUS_DSH_POLL_MS` 已移除。
 
-注册的原生工具：`agentbus_who`、`agentbus_announce`、`agentbus_send`、
-`agentbus_ask`、`agentbus_reply`、`agentbus_inbox`、`agentbus_primer`。
-
-每次 spawn 都有超时上界和防护：总线/daemon 的问题绝不会从插件回调中抛出
-（未捕获的异常会拖垮整个 Host）。
+原生工具：`agentbus_who`、`agentbus_announce`、`agentbus_send`、`agentbus_ask`、
+`agentbus_reply`、`agentbus_inbox`、`agentbus_receipt`、`agentbus_primer`。
+每次 spawn 都有防护与超时上界。
 
 ## 安装
 
-插件需要：
-- `agentbus` 在 `PATH` 上，或设置 `AGENTBUS_BIN=/abs/path/to/agentbus`；
-- 与你想触达的对端使用相同的 `AGENTBUS_HOME`（默认 `~/.agentbus`）。
-
-### A. 自动化（推荐）
+要求：`agentbus` 在 `PATH`（或 `AGENTBUS_BIN=/abs/path`），并与对端使用同一个
+`AGENTBUS_HOME`。
 
 ```bash
 npm install -g agentbus-cli
 agentbus setup --agents dsh
 ```
 
-源码 checkout 请使用 `./scripts/install.sh --agents dsh`。setup 会把内嵌插件
-解压到 `~/.agentbus/integrations/dsh-plugin`，并在 `dsh` 位于 `PATH` 上时
-运行 `dsh plugin --profile web add <that path>`。该包声明了自己的
-bundle patch，因此 DSH 会自行插入 loader 行；之后重启 host（或依赖配置
-HMR）。如果 `dsh` 不在 `PATH` 上，setup 会打印需要手动运行的准确命令。
+源码使用 `./scripts/install.sh --agents dsh`。setup 将内嵌插件解到
+`~/.agentbus/integrations/dsh-plugin`，可用时执行
+`dsh plugin --profile web add <path>`。之后重启 host 或依赖配置 HMR。
 
-### B. 本地 checkout（已验证路径）
-
-编写一个 patch overlay 并传给 DSH 启动器：
+手动 checkout overlay：
 
 ```yaml
-# /tmp/agentbus.patch.yml
 - insert:
     - id: agentbus
       name: /abs/path/to/agentbus/integrations/dsh/plugin/lib/index.js
 ```
 
 ```bash
-dsh headless --patch /tmp/agentbus.patch.yml --dump-config | grep -A1 agentbus
-dsh headless --patch /tmp/agentbus.patch.yml "Call agentbus_who and show its output"
+dsh headless --patch /tmp/agentbus.patch.yml --dump-config
 ```
 
-对于 web profile，把同一个 `insert` 行追加到
-`~/.dsh/profiles/web/cordis.patch.yml` 并重启 host（或依赖配置 HMR）。
-loader 接受绝对路径 / file URL 作为 `insert.name`。
+插件为 ESM，无需构建。headless 模型凭据与 DSH sandbox 配置属于 Harness 自身，
+不是 AgentBus 的要求。
 
-### C. 以包的形式安装
+## 验证与限制
 
 ```bash
-dsh plugin --profile web add /abs/path/to/agentbus/integrations/dsh/plugin
+node test/dsh-idle-wake.mjs
 ```
 
-然后添加 loader 行（或让 bundle patch 来完成）：
-
-```yaml
-# ~/.dsh/profiles/web/cordis.patch.yml
-- insert:
-    - id: agentbus
-      name: dsh-agentbus
-```
-
-该包声明了 `dsh.engines.dsh` 与 `dsh.bundle.patch`；它有意暂时没有 config
-schema —— 通过环境变量配置。
-
-## 验证
-
-1. `dsh headless --patch … --dump-config` 会显示 `agentbus` 行。
-2. 调用 `agentbus_who` 的 prompt 会返回正在工作的会话表（空闲会话默认隐藏，
-   `all=true` 可列出；证明工具 + daemon 连通）。
-3. 第二个会话发送一个 `request`；插件会注入它，模型可以用 `agentbus_reply`
-   回答（见互操作测试与 [adoption.md](../adoption.md) §6 中的实测结果）。
-4. `agentbus log` 会显示该 reply，`kind=reply`，且 `replyTo` 指向原 request。
-
-## 限制
-
-- DSH 插件只能看到**它自己的 Host 进程**。另一个终端、另一个
-  `dsh headless`、Claude Code 或 ZCode 都是独立进程 —— 它们在 daemon 上
-  会合，这也是插件是客户端而非总线本身的原因。
-- 唤醒路径：`agent/turn-stopping` 覆盖回合关闭之前到达的消息；空闲轮询器
-  覆盖会话已经停在 prompt 之后才到达的消息。当 agent 处于 `idle` 时，插件
-  每 5s 调用一次 `agentbus hook Stop`（`AGENTBUS_DSH_POLL_MS`，默认 5000，
-  0 表示关闭）；当 Stop 策略因 urgent 消息或定向 request 返回
-  `decision:block` 时，调用 `agent.steer()` —— idle 驱动会开启一个回合，
-  于是 request 会被回答，而不是等人类输入。消息在 steer 之前已 ack，因此
-  不会重复投递。
-- 纯 hook 的 harness（ZCode、Claude Code）没有等价的宿主唤醒 API：在它们
-  已经 stop 之后发送的 request 仍要等到下一次 prompt 或 tool 调用。看板会
-  把这些显示为 pending request。
-- headless 运行需要模型凭据（`DEEPSEEK_API_KEY` 或 web 凭据存储）；插件
-  本身不需要凭据。
-- 如果 host 没有可用的 sandbox 后端，headless bash 会失败并提示
-  `sandbox mode workspace-write ... no sandbox backend is usable`。用
-  `DSH_PERMISSION_MODE=danger-full-access` 运行测试 host（或配置一个
-  sandbox）；这是 harness 的环境设置，不是 agentbus 的。
-- 插件是 ESM，并以构建后的 JS 加载；本地 checkout 无需构建步骤。
+该测试用真实二进制 + mock DSH agent，验证空闲 request 唤醒与活动中无工具边界的
+chat 推送。插件只能看到自己的 Host 进程；其他 Harness 在 daemon 上汇合。
+`agent.steer` 将输入排入活动 turn，不取消已有工具工作。传输接收不等于模型处理；
+通过回复与 `agentbus_receipt` 区分两者。

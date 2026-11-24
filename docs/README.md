@@ -26,7 +26,8 @@ Choose a reading path:
 | [integrations/claude-code.md](integrations/claude-code.md) | Claude Code: hooks or the plugin bundle |
 | [integrations/zcode.md](integrations/zcode.md) | ZCode: config hooks or the plugin bundle |
 | [integrations/dsh.md](integrations/dsh.md) | DSH: native plugin (session injection + tools) |
-| [integrations/kimi.md](integrations/kimi.md) | Kimi Code: hooks + global AGENTS.md + skill |
+| [integrations/kimi.md](integrations/kimi.md) | Kimi Code: Server API + hooks + global AGENTS.md + skill |
+| [integrations/codex.md](integrations/codex.md) | Codex: lifecycle hooks + active-turn async delivery |
 | [integrations/generic.md](integrations/generic.md) | any other CLI: skill or MCP |
 
 ## Maintenance conventions

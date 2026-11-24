@@ -4,9 +4,10 @@
 
 | 层 | 位置 | 验证什么 | 依赖 |
 |---|---|---|---|
-| 单元 | `internal/bus/*_test.go` | 注册/命名/投递/回收/持久化/限速/去重/kind/ask/reply | Go |
-| 端到端 | [test/e2e.sh](../../test/e2e.sh) | 真 daemon + 双会话 hook JSON + Web + A2A + MCP + 重启 | Go、curl |
-| DSH idle wake | [test/dsh-idle-wake.mjs](../../test/dsh-idle-wake.mjs) | 插件对 idle agent 的 Stop 策略 + `agent.steer`（mock agent，不花模型额度） | Go、Node |
+| 单元 | `internal/{bus,delivery,server}/*_test.go` | 注册、占用/降级、回执、原生 frame/API、答复关联、持久化 | Go |
+| 端到端 | [test/e2e.sh](../../test/e2e.sh) | 真 daemon + hook JSON + 原生推送 + 异步 watcher + Web/A2A/MCP + 重启 | Go、Node、curl |
+| 原生传输 | [test/native-push.mjs](../../test/native-push.mjs) | 真实二进制对 mock Claude socket、Kimi Server API、Codex 异步 hook | Go、Node |
+| DSH 原生推送 | [test/dsh-idle-wake.mjs](../../test/dsh-idle-wake.mjs) | 空闲 request 唤醒 + 活动中无工具事件推送（mock agent，不花模型额度） | Go、Node |
 | 插件结构 | `claude plugin validate` / `plugin details` | 插件清单、hooks 是否被宿主接受 | Claude Code |
 | 安装器 | [test/setup.sh](../../test/setup.sh) | 临时 `HOME` 下的探测、选择、幂等、备份与卸载 | Go、python3 |
 | 互操作 | [test/interop.sh](../../test/interop.sh) | 真实 dsh ↔ claude 会话能否收发并作出反应 | dsh、claude、额度 |
@@ -24,7 +25,8 @@ go test -race ./...      # 并发/竞态（可选，较慢）
 ```bash
 ./test/setup.sh           # 安装器：探测/幂等/卸载，使用临时 HOME
 ./test/e2e.sh
-./test/dsh-idle-wake.sh   # DSH 插件空闲唤醒（mock agent，不花额度）
+node test/native-push.mjs  # 通过真实二进制验证原生传输
+./test/dsh-idle-wake.sh   # DSH 空闲 + 活动中推送（mock agent）
 ```
 
 脚本会在 `mktemp` 的 `AGENTBUS_HOME` 中自起 daemon（看板端口默认 18787，
@@ -39,6 +41,7 @@ go test -race ./...      # 并发/竞态（可选，较慢）
 | 工作区 | `peers` 按 worktree/repo 分组；Kimi 首个 prompt 自动注入名册 |
 | 投递 | PostToolUse 注入、ack 后不重复投递 |
 | 投递梯子 | chat 不唤醒；定向 request 唤醒并 flush 队列；广播 request 不唤醒；`AGENTBUS_WAKE=urgent` 退回仅 urgent；urgent 始终唤醒 |
+| 原生 + 异步 | Claude socket 推送/空闲策略/不重复，Kimi steer/空闲 prompt/回执，Codex 活动中异步上下文；独立临时 daemon |
 | ask | 定向 request 请求-答复往返，答复被消费不重复投递 |
 | reply | 无需记 id，回复最近一条对端消息（kind=reply + replyTo） |
 | notify | 单向通知、无回复语义 |
@@ -62,8 +65,9 @@ claude plugin validate integrations/zcode
 claude --plugin-dir "$PWD/integrations/claude-code/plugin" plugin details agentbus
 ```
 
-期望 `plugin details` 显示 1 skill、5 hooks（SessionStart / UserPromptSubmit /
-PostToolUse / Stop / SessionEnd），且 `Status: ✔ loaded`。
+期望 `plugin details` 显示 1 skill、8 hooks（SessionStart / UserPromptSubmit /
+PreToolUse / PostToolUse / PostToolUseFailure / Stop / StopFailure / SessionEnd），
+且 `Status: ✔ loaded`。
 
 ZCode 没有可脚本化的 CLI，插件清单按 `.zcode-plugin/plugin.json` 规范编写；
 本机只能做 JSON/结构校验与人工加载验证。
@@ -151,7 +155,17 @@ printf '%s' '{"hook_event_name":"Stop",...}' | agentbus hook
 安装见 [integrations/kimi.md](integrations/kimi.md)。额度恢复后用
 `kimi -p "..."` 做一次 live smoke test 即可。
 
-## 8. 看板显示 0 会话的排查
+## 8. 原生投递验证（2026-11-24）
+
+当前测试在本机 Go 1.24.13、Node 24.22.1、Claude Code 2.1.139、Kimi Code
+2.6.2、DSH 0.2.2-rc.5 环境下通过。`test/native-push.mjs` 使用真实 AgentBus
+二进制与 daemon，对 mock loopback Harness 端点验证，而非真实模型：Claude 带鉴权
+socket frame（含空闲策略且不重复）、Kimi `steer` + 幂等空闲 `prompts` + accepted
+回执，以及 Codex 活动 turn 异步 `additionalContext`。`test/dsh-idle-wake.mjs`
+还验证活动中 DSH 推送。生成的 9 事件 Kimi 配置通过 `kimi doctor`。这些测试不花
+模型额度，验证的是传输与生命周期行为，不宣称真实模型已处理原生消息。
+
+## 9. 看板显示 0 会话的排查
 
 若 `agentbus who` 有会话但看板/API 为空：
 
@@ -165,12 +179,15 @@ ss -ltnp | grep 8787   # 或读 /proc/net/tcp + /proc/<pid>/fd
 （日志里是 `web disabled: bind: address already in use`）。停掉占用端口的
 测试 daemon，再重启默认 daemon 即可。
 
-## 9. 提交前检查清单
+## 10. 提交前检查清单
 
 ```bash
 gofmt -l .
 go vet ./...
-go test ./...
+go test -race ./...
+./test/setup.sh
 ./test/e2e.sh
+./scripts/test-npm.sh
+python3 scripts/check-docs.py
 git diff --check
 ```

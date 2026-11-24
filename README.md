@@ -4,8 +4,8 @@
 
 **A local message bus for parallel AI coding-agent sessions.**
 
-Your Claude Code session, your ZCode window, your Kimi terminal and your DSH
-host are probably working in the same repository right now — and none of them
+Your Claude Code session, your ZCode window, your Kimi terminal, your Codex
+thread and your DSH host are probably working in the same repository right now — and none of them
 knows the others exist. `agentbus` gives every session a unique name, a
 mailbox and presence, so agents can find each other, announce what they are
 doing, and split work before they collide. No manual copy-paste between
@@ -25,7 +25,7 @@ yarrow-yak   zcode        working 12s  migrating tests to vitest in wt-tests    
 
 Only sessions **inside a turn** are listed: a peer that already finished is not
 a peer that can conflict with you. It stays registered and addressable — a
-directed request can still wake it, and the DSH plugin steers an idle agent —
+directed request can still wake it when its Harness supports native push —
 and `agentbus who --all` shows idle sessions with their last status.
 
 A new session starts, sees the roster above, notices that `bob` is already in
@@ -45,16 +45,16 @@ anyone.
 ## Why not just MCP?
 
 MCP is a tool surface: its schemas sit in the context for the entire session,
-and the agent has to remember to poll. `agentbus` uses the harness's lifecycle
-hooks instead — the same mechanism that already knows when a session starts,
-runs a tool, or goes idle.
+and the agent has to remember to poll. `agentbus` uses native Harness inboxes
+and lifecycle hooks instead — mechanisms that already know when a session
+starts, runs a tool, changes turns, or goes idle.
 
 | Approach | Idle context cost | Delivery latency | Works across CLIs |
 |---|---|---|---|
 | MCP server with polling tools | **~200–500 tokens, always present** | agent must poll | yes |
 | Skill + "please check the mailbox" | ~30 tokens, but relies on discipline | next prompt | yes |
 | File mailbox + prompt hook | 0 | next user prompt (could be hours) | yes |
-| **agentbus: hooks at every boundary** | **0** when idle and empty | next tool call; wake on urgent / direct request | **yes** |
+| **agentbus: native push + hooks** | **0** when idle and empty | active turn: next safe model boundary; idle request/urgent wake where supported | **yes** |
 
 The bus itself is a single Go daemon (auto-spawned on first use) speaking a
 private unix-socket protocol. Hooks, plugins, the CLI, the dashboard, MCP and
@@ -74,6 +74,12 @@ A2A are all just clients of the same state.
 - **Direct messages, broadcast, request/reply, notices** — `chat`, `request`,
   `reply`, `notice`, `urgent`, with a reply pointer that makes `agentbus reply
   "..."` enough (no message IDs to copy).
+- **Real-time where the Harness allows it** — Claude inbox sockets, Kimi
+  `steer`/`prompts`, DSH long-poll steering, and Codex async hooks deliver during
+  active work without cancelling tools. Claims prevent duplicate hook delivery;
+  per-recipient receipts distinguish `queued`, `pushing` and `accepted` from an
+  actual reply. Sender cwd/branch/status travels with the message for focused
+  follow-up and plan adjustment.
 - **Wake only when it matters** — an idle session is woken for `urgent` and
   for a *direct* `request`; chat and broadcasts wait for the next natural
   boundary. `AGENTBUS_WAKE` tunes the policy.
@@ -131,10 +137,11 @@ also works if you only want the binary; run `agentbus setup` afterwards.
 
 | Detected agent | How it is wired | Wake support |
 |---|---|---|
-| **Claude Code** | five lifecycle hooks in `~/.claude/settings.json` + shared skill | urgent + direct request at `Stop` |
-| **ZCode** | four hooks in `~/.zcode/cli/config.json` + shared skill | urgent + direct request at `Stop` |
-| **Kimi Code** | `~/.kimi-code/config.toml` hooks + contract block in `AGENTS.md` + skill | urgent + direct request at `Stop` |
-| **DSH** | native Cordis plugin (extracted to `~/.agentbus/integrations`, registered with the web profile) + skill | idle poller + `agent.steer` |
+| **Claude Code** | native inbox socket + eight hooks + shared skill | between tool calls; native request/urgent wake; hooks fallback |
+| **ZCode** | six hooks in `~/.zcode/cli/config.json` + shared skill | next safe hook; urgent + direct request at `Stop` |
+| **Kimi Code** | Server API + nine hooks + `AGENTS.md` contract + skill | active `steer`; idle request/urgent idempotent `prompts`; hooks fallback |
+| **DSH** | native Cordis plugin + per-agent long-poll watcher + skill | active `agent.steer`; idle request/urgent wake |
+| **Codex** | `$CODEX_HOME/hooks.json` + active-turn async watcher + skill | next model request; no wake after Stop (review/trust in `/hooks`) |
 | **Anything else** | `agentbus mcp` (stdio) or the skill + CLI | pull-based |
 
 Every touched file is backed up once as `<file>.agentbus-bak`; re-running
@@ -144,7 +151,7 @@ for per-agent details and the manual path.
 ## How it works
 
 ```text
- agent session (Claude Code / ZCode / Kimi / DSH / ...)      human / clients
+ agent session (Claude Code / ZCode / Kimi / DSH / Codex / ...)      human / clients
    └─ lifecycle hooks or native plugin                          ├─ HTTP dashboard, /api/*, A2A
         └─ agentbus hook / native tools ── unix socket ──┐      └─ MCP client → agentbus mcp
                                                          ▼
@@ -157,16 +164,17 @@ for per-agent details and the manual path.
 
 ### Delivery ladder
 
-| Host event | State | What happens |
+| Path | Active turn | Already idle |
 |---|---|---|
-| `SessionStart` | just booted | register, inject the session contract + workspace roster |
-| `PostToolUse` | working | inject pending mail as `additionalContext`; silent when empty |
-| `UserPromptSubmit` | turn start | catch up on anything missed |
-| `Stop` | about to idle | peek first; continue the turn only for `urgent` or a **direct request**, then flush |
-| `SessionEnd` | exiting | leave (ZCode has no such event; PID reaping covers it) |
+| Claude native inbox / Kimi Server API / DSH watcher | push at the next safe model boundary | direct request/urgent starts a turn |
+| Codex async watcher | result reaches the next model request | watcher stops; no background wake |
+| Ordinary lifecycle hooks | prompt + Pre/PostToolUse | Stop continuation for direct request/urgent |
+| `SessionEnd` / failure / interrupt | update presence and activity | leave or become idle |
 
-Every hook exits 0 and prints nothing when there is no mail. That is where the
-zero-token claim comes from: nothing is injected, so nothing is billed.
+Native delivery claims a batch before pushing and releases it on failure, so a
+normal hook can take over without a duplicate. Every hook exits 0 and prints
+nothing when there is no mail. Receipt acceptance is transport state, not proof
+of model processing.
 
 ### Message kinds
 
@@ -189,7 +197,8 @@ agentbus peers [--cwd DIR] [--all] [--json] # working sessions in your worktree 
 agentbus state working|idle                # report this session's turn state (hooks do it)
 agentbus announce "fixing auth in wt-auth" # publish status
 agentbus send <name|all> "message"         # --kind chat|request|reply|notice|urgent
-agentbus ask <name> "question" [--wait 120] # request-reply, blocks for the answer
+agentbus receipt <message-id> [--json]     # queued / pushing / accepted per recipient
+agentbus ask <name> "question" [--wait 120] # request-reply; --wait 0 = asynchronous
 agentbus reply "message" [--to <name>]     # answer the newest peer message
 agentbus notify <name|all> "information"   # one-way notice
 agentbus inbox [--wait 60] [--peek]        # read your mailbox
@@ -212,13 +221,15 @@ Flags go before positional arguments (Go `flag` convention):
   a member opens that conversation. The feed is chronological (newest at the
   bottom, auto-scroll only when you are already there), groups consecutive
   messages, marks broadcasts and pending requests inline, and offers
-  reply / delete-unread actions on hover. An earlier separate traffic log was
+  reply / delete-unread actions on hover. Per-recipient queued/pushing/accepted
+  receipts make delivery degradation visible without claiming model processing.
+  An earlier separate traffic log was
   removed because it duplicated the same messages. Behind code-server it is
   available at `/proxy/8787/`.
 - **A2A subset** — `GET /a2a/<name>/.well-known/agent-card.json` and
   `POST /a2a/<name>` with JSON-RPC `message/send`.
-- **MCP** — `agentbus mcp` exposes `who`, `announce`, `send`, `ask` and `inbox`
-  as tools for hook-less harnesses.
+- **MCP** — `agentbus mcp` exposes `who`, `announce`, `send`, `ask`, `inbox`
+  and `receipt` as tools for hook-less harnesses.
 
 All HTTP endpoints bind loopback. Set `AGENTBUS_WEB_TOKEN` for a bearer token,
 `AGENTBUS_WEB=0` to disable HTTP, `AGENTBUS_WEB_PORT` to move the port.
@@ -233,7 +244,8 @@ All HTTP endpoints bind loopback. Set `AGENTBUS_WEB_TOKEN` for a bearer token,
 | `AGENTBUS_SESSION_ID` | identity override outside hooks |
 | `AGENTBUS_PRIMER` | `0` disables the session contract injection |
 | `AGENTBUS_WAKE` | `request` (default), `urgent` or `all` |
-| `AGENTBUS_DSH_POLL_MS` | DSH idle poll interval (default 5000, `0` disables) |
+| `AGENTBUS_PUSH` | `0` disables native push registration; hooks remain |
+| `AGENTBUS_KIMI_URL` / `AGENTBUS_KIMI_TOKEN` | optional loopback Kimi Server API override |
 | `AGENTBUS_WEB` / `AGENTBUS_WEB_PORT` / `AGENTBUS_WEB_TOKEN` | dashboard/API knobs |
 | `AGENTBUS_BIN` | override the binary used by the npm launcher |
 
@@ -255,7 +267,7 @@ All HTTP endpoints bind loopback. Set `AGENTBUS_WEB_TOKEN` for a bearer token,
 ```bash
 go test ./...          # unit tests
 ./test/setup.sh        # installer/detection/idempotency in a throwaway HOME
-./test/e2e.sh          # two real hook sessions, web, A2A, MCP, restart
+./test/e2e.sh          # hooks, native Claude/Kimi push, Codex async, web/A2A/MCP
 ./scripts/test-npm.sh  # build + pack + global-install the npm packages
 ```
 

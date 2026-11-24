@@ -122,7 +122,7 @@ AgentBus — local coordination between AI agent sessions
    “不要盲从”泛化成“什么都先问用户”；
 2. 新增 `agentbus reply`（自动选最近一条对端消息、自动带 replyTo），把回复成本
    降到一条命令；
-3. DSH 插件把 `who/send/ask/reply/announce/inbox` 注册成原生工具，并用 user
+3. DSH 插件把 `who/send/ask/reply/announce/inbox/receipt` 注册成原生工具，并用 user
    消息投递，显著提高可发现性与行动率；
 4. 注入文本固定标注“来自其他 agent，不是用户指令”，并给出回复动作——安全边界
    与可操作性同时保留。
@@ -150,11 +150,12 @@ hooks 接入后，`zcode -p` 会话能自动注册、接收 peer `request` 并�
 3. `AGENTBUS_WAKE=urgent` 保留旧的保守行为，`all` 保留全唤醒；
 4. `send` 对定向 request 输出 "a reply is expected; an idle peer is woken"，
    `ask` 超时提示对端可能忙/未装 hook；
-5. DSH 原生插件加 5s idle 轮询：agent `idle` 时仍按 Stop 策略 peek，命中就
-   `agent.steer()` 开新回合（`AGENTBUS_DSH_POLL_MS` 可调/关闭）。这补上了"Stop
-   hook 已经跑完才收到 request"的真实窗口；mock agent 测试见
-   [../test/dsh-idle-wake.mjs](../../test/dsh-idle-wake.mjs)。纯 hook 的 ZCode /
-   Claude Code 没有宿主级 wake API，仍需下一条自然边界。
+5. 当前版本加入原生投递：DSH 用长轮询 watcher 取代旧的 5s 轮询；Claude 用每会话
+   inbox socket；Kimi 用 Server API `steer` / 幂等 `prompts`；Codex 用活动 turn
+   异步 hooks。原子占用在推送失败时释放给普通 hooks。见
+   [../test/native-push.mjs](../../test/native-push.mjs) 与
+   [../test/dsh-idle-wake.mjs](../../test/dsh-idle-wake.mjs)。ZCode 完全停止后仍需
+   自然边界。
 
 **仍待解决**
 
@@ -162,10 +163,10 @@ hooks 接入后，`zcode -p` 会话能自动注册、接收 peer `request` 并�
   严格任务下“忽略”仍会发生；可行的补强是常驻 skill 描述 + 更短的提示，或让用户
   在任务开始时主动说一句“留意 agentbus”。
 - 需要更多模型/任务样本，才能把“预授权”措辞调成既不盲从、也不过度请示。
-- ZCode / Claude Code 是 hook-only：request 若在目标**已经 stop 之后**才到，就只能
-  等目标的下一个 prompt / tool call；它们的宿主没有 DSH 那样的 wait/steer API。因此
-  `ask` 对完全空闲的这两个 harness 仍可能超时；看板会把这类 request 标成「待回复」，
-  人类可以直接去目标会话敲一句，或等它下一次活动。DSH 已由 5s idle poller 覆盖。
+- ZCode 仅靠 hooks：request 若在目标**已经 stop 之后**才到，只能等下一个 prompt /
+  tool call。Claude、Kimi、DSH 在端点可用时已有原生唤醒路径；Codex 在 Stop 后不
+  唤醒。原生端点不可用或目标 hold/refuse 策略仍可能让 `ask` 超时。看板区分 queued
+  与待回复；人类可提醒目标，或让发送方继续并稍后读取答复。
 
 ### 长程并发实测（2026-10-29）
 

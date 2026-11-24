@@ -66,6 +66,7 @@ cd agentbus
 ./scripts/install.sh --zcode-hooks      # = --agents zcode
 ./scripts/install.sh --kimi-hooks       # = --agents kimi
 ./scripts/install.sh --dsh-plugin       # = --agents dsh
+./scripts/install.sh --codex-hooks      # = --agents codex
 ./scripts/install.sh --dry-run
 ./scripts/install.sh --uninstall
 ./scripts/install.sh --plugin           # repo plugin bundles only
@@ -79,7 +80,7 @@ AGENTBUS_BIN_DIR="$HOME/bin" ./scripts/install.sh
 
 ## `agentbus setup` 做了什么
 
-1. **检测** Claude Code、ZCode、Kimi Code、DSH 以及通用 skill 支持：检查配置目录
+1. **检测** Claude Code、ZCode、Kimi Code、DSH、Codex 以及通用 skill 支持：检查配置目录
    与 `PATH`。
 2. **询问**要给哪些检测到的 agent 接线（或接受 `--yes` / `--agents`）。
 3. **安装 skill** 到 `~/.agents/skills/agentbus/SKILL.md`（Claude Code、ZCode 与
@@ -96,7 +97,7 @@ AGENTBUS_BIN_DIR="$HOME/bin" ./scripts/install.sh
 |---|---|
 | *（无）* | 交互式选择；默认选中所有检测到的 agent |
 | `--yes`、`-y` | 非交互，为所有检测到的 agent 接线 |
-| `--agents <list>` | 逗号列表：`claude,zcode,kimi,dsh`，或 `all` / `none` |
+| `--agents <list>` | 逗号列表：`claude,zcode,kimi,dsh,codex`，或 `all` / `none` |
 | `--dry-run` | 打印计划；不写入任何内容（可与 `--uninstall` 组合预览移除） |
 | `--uninstall` | 移除 agentbus 的 hooks、配置块、插件与 skill |
 | `--no-skill` | 跳过 skill 安装 |
@@ -106,15 +107,16 @@ AGENTBUS_BIN_DIR="$HOME/bin" ./scripts/install.sh
 
 | Agent | 文件 | 说明 |
 |---|---|---|
-| Claude Code | `~/.claude/settings.json` | SessionStart、UserPromptSubmit、PostToolUse、Stop、SessionEnd → `agentbus hook` |
-| ZCode | `~/.zcode/cli/config.json` | 除 SessionEnd 外同样的事件；设置 `hooks.enabled: true` |
-| Kimi Code | `~/.kimi-code/config.toml`、`~/.kimi-code/AGENTS.md`、skill | 托管 TOML 块位于 `# >>> agentbus` / `# <<< agentbus` 之间；会话契约位于 `<!-- agentbus:begin -->` 标记之间 |
-| DSH | `~/.agentbus/integrations/dsh-plugin`、DSH web profile | 解出原生 Cordis 插件，并在 `dsh` 位于 `PATH` 上时用 `dsh plugin --profile web add` 注册；否则打印手动命令 |
+| Claude Code | `~/.claude/settings.json` | 原生 inbox + SessionStart、prompt、Pre/PostToolUse(+Failure)、Stop(Failure)、SessionEnd |
+| ZCode | `~/.zcode/cli/config.json` | 6 个生命周期事件；设置 `hooks.enabled: true`；无 SessionEnd |
+| Kimi Code | `~/.kimi-code/config.toml`、`~/.kimi-code/AGENTS.md`、skill | Server API + 9 个生命周期事件；托管 TOML 与指令块 |
+| DSH | `~/.agentbus/integrations/dsh-plugin`、DSH web profile | 原生插件 + 长轮询 watcher；可用时用 `dsh plugin --profile web add` 注册 |
+| Codex | `$CODEX_HOME/hooks.json` | 生命周期 hooks + 活动 turn 异步 watcher；需在 `/hooks` 审核信任 |
 | 其他任意 CLI | skill / MCP | `agentbus mcp` 或加载 skill；见 [integrations/generic.md](integrations/generic.md) |
 
 每个 agent 的手动路径仍保留在集成指南中（[Claude Code](integrations/claude-code.md)、
 [ZCode](integrations/zcode.md)、[Kimi](integrations/kimi.md)、
-[DSH](integrations/dsh.md)）。
+[DSH](integrations/dsh.md)、[Codex](integrations/codex.md)）。
 
 ## 验证
 

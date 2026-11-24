@@ -6,11 +6,11 @@
 
 ## Our requirements
 
-1. **Cross-CLI**: local parallel sessions from claude code / zcode / kimi / dsh / opencode etc. can all connect;
+1. **Cross-CLI**: local parallel sessions from claude code / zcode / kimi / dsh / codex / opencode etc. can all connect;
 2. **Session naming**: registered at startup, names unique (assigned by the server or collision-checked);
 3. **Presence and status**: others can see "bob is working on XXX", and a newcomer spots conflicts as soon as it starts;
 4. **Point-to-point messages**: send a message to a named session and negotiate the split of work; broadcast supported;
-5. **Near real-time**: delivery works whether the peer is working (its next tool call) or idle (woken at Stop);
+5. **Near real-time**: native push / async delivery reaches active turns, and supported Harnesses wake idle peers for direct requests; lifecycle hooks remain fallback;
 6. **Token economics**: **zero** context overhead when idle with no messages — the essential difference from MCP-based designs;
 7. **Zero administration**: crashed sessions are reclaimed automatically, the daemon restarts itself, and the user does no operations work.
 
@@ -77,11 +77,12 @@ parts unique to us:
 - a cross-CLI identity protocol (session_id → unique name, `/proc` ancestor
   probing as the fallback);
 - presence + status announcements ("bob is working on XXX");
-- four delivery moments (SessionStart roster / PostToolUse during work /
-  UserPromptSubmit turn start / Stop wake for urgent and directed request);
+- native inbox/API delivery plus lifecycle fallback (Claude/Kimi/DSH push,
+  Codex async hooks, prompt/tool/Stop boundaries), with claims and per-recipient
+  delivery receipts;
 - PID-level liveness and tombstone-style name reclamation;
 - rate limiting + deduplication against agent conversation storms;
 - daemon auto-start and atomic state persistence;
 - optional local boundaries: web dashboard, A2A subset, stdio MCP facade — all
-  just views over the same bus state, not changing the "hooks as the
-  foundation" conclusion.
+  just views over the same bus state; native push and hooks share one delivery
+  and receipt model.

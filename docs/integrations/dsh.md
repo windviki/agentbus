@@ -1,124 +1,68 @@
 # DSH (DeepSeek Harness) integration
 
-DSH is a Cordis-based harness: plugins are Node packages that can hook agent
-lifecycle events and register tools. The bundled plugin
-[`integrations/dsh/plugin`](../../integrations/dsh/plugin) is a thin client of the same daemon —
-it does not reimplement the bus, it calls `agentbus hook` / the CLI and maps
-the results onto DSH's native events. Cross-CLI coordination still works
-because the daemon is outside any one harness.
+The native Cordis plugin maps DSH lifecycle events to the shared daemon and
+adds one long-poll watcher per live agent. It does not create a second bus.
 
-## What it maps
+## Event mapping
 
-| DSH event | agentbus equivalent | Effect |
-|---|---|---|
-| `agent/created` | `agentbus hook` SessionStart | registers the session; injects session contract + **workspace-grouped roster** (same worktree / same repo) as a user message (`agent.inject`) |
-| `agent/pre-step` | UserPromptSubmit | delivers queued messages at the next step boundary |
-| `tools/post-execute` | PostToolUse | delivers messages in the same step, right after a tool call |
-| `agent/turn-stopping` | Stop | if an **urgent** message or a request addressed directly to this session is pending, `agent.steer`s the session so the turn continues; chat/notice/broadcast requests stay queued. Also marks the session `idle` on the bus |
-| `agent/disposed` | `leave` | removes the session from the bus |
+| DSH event/path | AgentBus behaviour |
+|---|---|
+| `agent/created` | register; inject contract + workspace roster; start watcher |
+| `agent/pre-step` | mark working; deliver at the step boundary |
+| `tools/post-execute` | inject right after a tool result |
+| `agent/turn-stopping` | mark idle; steer for urgent/direct request |
+| per-agent watcher | 30s long-poll; steer active turns immediately, wake idle only for urgent/direct request |
+| `agent/disposed` | leave and stop the watcher |
 
-Both Stop paths — the real turn end and the 5s idle poller below — report
-`idle`, and `agent/pre-step` reports `working`. That is what lets `agentbus who`
-list a DSH session only while it is actually working while `agentbus who --all`
-still shows it as an idle, wakeable session.
+Active-watch polls use `active_only`, so Stop invalidates an outstanding watch
+instead of letting it consume idle mail. Idle watches use `wake_only`, so
+ordinary chat/notice does not cause a busy loop or a new turn. Inbox ack is
+atomic between the watcher and lifecycle hooks, preventing duplicate delivery.
+The previous 5-second idle poller and `AGENTBUS_DSH_POLL_MS` are gone.
 
-Native tools registered: `agentbus_who`, `agentbus_announce`, `agentbus_send`,
-`agentbus_ask`, `agentbus_reply`, `agentbus_inbox`, `agentbus_primer`.
-
-Every spawn is time-bounded and guarded: a bus/daemon problem never throws out
-of a plugin callback (an unhandled throw would take the whole Host down).
+Native tools: `agentbus_who`, `agentbus_announce`, `agentbus_send`,
+`agentbus_ask`, `agentbus_reply`, `agentbus_inbox`, `agentbus_receipt`,
+`agentbus_primer`. Every spawn is guarded and time-bounded.
 
 ## Install
 
-The plugin needs:
-- `agentbus` on `PATH`, or `AGENTBUS_BIN=/abs/path/to/agentbus`;
-- the same `AGENTBUS_HOME` as the peers you want to reach (default
-  `~/.agentbus`).
-
-### A. Automated (recommended)
+Requirements: `agentbus` on `PATH` (or `AGENTBUS_BIN=/abs/path`) and the same
+`AGENTBUS_HOME` as the peers.
 
 ```bash
 npm install -g agentbus-cli
 agentbus setup --agents dsh
 ```
 
-From a source checkout use `./scripts/install.sh --agents dsh`. Setup extracts
-the embedded plugin to `~/.agentbus/integrations/dsh-plugin` and runs
-`dsh plugin --profile web add <that path>` when `dsh` is on `PATH`. The package
-declares its bundle patch, so DSH inserts the loader row itself; restart the
-host afterwards (or rely on config HMR). If `dsh` is not on `PATH`, setup
-prints the exact command to run manually.
+From source: `./scripts/install.sh --agents dsh`. Setup extracts the embedded
+plugin to `~/.agentbus/integrations/dsh-plugin` and runs
+`dsh plugin --profile web add <path>` when available. Restart the host or rely
+on config HMR.
 
-### B. Local checkout (verified path)
-
-Write a patch overlay and pass it to the DSH launcher:
+Manual checkout overlay:
 
 ```yaml
-# /tmp/agentbus.patch.yml
 - insert:
     - id: agentbus
       name: /abs/path/to/agentbus/integrations/dsh/plugin/lib/index.js
 ```
 
 ```bash
-dsh headless --patch /tmp/agentbus.patch.yml --dump-config | grep -A1 agentbus
-dsh headless --patch /tmp/agentbus.patch.yml "Call agentbus_who and show its output"
+dsh headless --patch /tmp/agentbus.patch.yml --dump-config
 ```
 
-For the web profile, append the same `insert` row to
-`~/.dsh/profiles/web/cordis.patch.yml` and restart the host (or rely on
-config HMR). The loader accepts absolute paths / file URLs for `insert.name`.
+The plugin is ESM and needs no build step. Headless model credentials and DSH
+sandbox configuration remain Harness concerns, not AgentBus requirements.
 
-### C. Install as a package
+## Verification and limits
 
 ```bash
-dsh plugin --profile web add /abs/path/to/agentbus/integrations/dsh/plugin
+node test/dsh-idle-wake.mjs
 ```
 
-Then add the loader row (or let the bundle patch do it):
-
-```yaml
-# ~/.dsh/profiles/web/cordis.patch.yml
-- insert:
-    - id: agentbus
-      name: dsh-agentbus
-```
-
-The package declares `dsh.engines.dsh` and `dsh.bundle.patch`; it intentionally
-has no config schema yet — configure through environment variables.
-
-## Verification
-
-1. `dsh headless --patch … --dump-config` shows the `agentbus` row.
-2. A prompt that calls `agentbus_who` returns the live-session table (proves
-   tools + daemon connectivity).
-3. A second session sends a `request`; the plugin injects it and the model can
-   answer with `agentbus_reply` (see the interop test and the measured results
-   in [adoption.md](../adoption.md) §6).
-4. `agentbus log` shows the reply with `kind=reply` and a `replyTo` pointing at
-   the request.
-
-## Limits
-
-- A DSH plugin only sees **its own Host process**. Another terminal, another
-  `dsh headless`, Claude Code or ZCode are separate processes — they meet on
-  the daemon, which is why the plugin is a client and not the bus itself.
-- Wake paths: `agent/turn-stopping` covers a message that arrives before the
-  turn closes; an idle poller covers a message that arrives after the session
-  has already stopped at the prompt. While an agent is `idle`, the plugin calls
-  `agentbus hook Stop` every 5s (`AGENTBUS_DSH_POLL_MS`, default 5000, 0
-  disables) and, when the Stop policy returns `decision:block` for an urgent
-  message or a direct request, calls `agent.steer()` — an idle driver starts a
-  turn, so the request is answered instead of waiting for the human. Messages
-  are acked before the steer, so there is no duplicate delivery.
-- Hook-only harnesses (ZCode, Claude Code) have no equivalent host wake API:
-  a request sent after they have already stopped still waits for the next
-  prompt or tool call. The dashboard shows those as pending requests.
-- Headless runs need model credentials (`DEEPSEEK_API_KEY` or the web
-  credentials store); the plugin itself needs no credentials.
-- If the host has no usable sandbox backend, headless bash fails with
-  `sandbox mode workspace-write ... no sandbox backend is usable`. Run the
-  test host with `DSH_PERMISSION_MODE=danger-full-access` (or configure a
-  sandbox); this is a harness environment setting, not an agentbus one.
-- The plugin is ESM and is loaded as built JS; a local checkout needs no build
-  step.
+This uses the real binary and a mock DSH agent to verify both idle request wake
+and active-turn chat push without a tool boundary. The plugin sees only its own
+Host process; other Harnesses meet it on the daemon. `agent.steer` queues input
+into the active turn rather than cancelling existing tool work. Transport
+acceptance is not model processing; use replies and `agentbus_receipt` to
+inspect the distinction.
